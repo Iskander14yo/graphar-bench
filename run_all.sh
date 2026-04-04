@@ -50,10 +50,12 @@ RESULT_DIR="graphar-bench/results/${DATASET}/$(date +%Y%m%d-%H%M)"
 mkdir -p "${RESULT_DIR}"
 
 echo "Run benchmark (result dir: ${RESULT_DIR})"
+# pip install -e "./python[ml]" # to update only graphar after git checkout
 sudo perf record -g -F 99 --call-graph dwarf \
   .venv/bin/python graphar-bench/scripts/04_run_benchmark.py --config "${BENCHMARK_CONFIG}" --result-dir "${RESULT_DIR}"
 sudo perf report --stdio > "${RESULT_DIR}/gar_perf.txt"
 sudo perf script | ./FlameGraph/stackcollapse-perf.pl > "${RESULT_DIR}/out.folded"
+./FlameGraph/flamegraph.pl "${RESULT_DIR}/out.folded" > "${RESULT_DIR}/flamegraph.svg"
 
 echo "Analyze results"
 sudo .venv/bin/python graphar-bench/analyze.py "${RESULT_DIR}" --plots
