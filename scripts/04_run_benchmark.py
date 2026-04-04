@@ -18,7 +18,7 @@ import pyarrow  # noqa: F401 - must precede graphar C extension
 import torch
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # exps/ → enables `from benchmarks.xxx`
+sys.path.insert(0, str(Path(__file__).parent.parent))  # graphar-bench/ → enables `from benchmarks.xxx`
 sys.path.insert(0, str(Path(__file__).parent))
 from benchmark_yaml import DEFAULT_PATH, BenchmarkConfig, load_config  # noqa: E402
 
@@ -282,7 +282,7 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
 
     if result_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M")
-        result_dir = Path("exps/results") / dataset / timestamp
+        result_dir = Path("graphar-bench/results") / dataset / timestamp
         result_dir.mkdir(parents=True, exist_ok=True)
     else:
         result_dir = Path(result_dir)

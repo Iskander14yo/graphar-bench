@@ -1,5 +1,3 @@
-"""Benchmark YAML → typed config (exps/config/benchmark.yaml)."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

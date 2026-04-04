@@ -59,7 +59,7 @@ install_arrow_if_missing() {
 
 build_graphar_spark_if_missing() {
   local jar_path
-  jar_path="$(bash exps/scripts/resolve_spark_jar.sh)"
+  jar_path="$(bash graphar-bench/scripts/resolve_spark_jar.sh)"
   if [[ -f "${jar_path}" ]]; then
     return
   fi
