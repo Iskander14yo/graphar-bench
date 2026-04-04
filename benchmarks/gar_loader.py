@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from collections import defaultdict
 from collections.abc import Iterator
 
 from torch_geometric.data import Data
@@ -12,8 +11,8 @@ from .timings import BatchTimings
 
 
 def iter_batches(loader: GARNeighborLoader) -> Iterator[tuple[Data, BatchTimings]]:
-    loader.timings = defaultdict(list)
-    t = loader.timings
+    loader._timings.clear()
+    t = loader._timings
 
     gen = iter(loader)
     batch_id = 0
