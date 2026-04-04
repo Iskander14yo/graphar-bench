@@ -1,0 +1,11 @@
+
+# in addition to [ml] section in pyproject.toml
+
+torch<2.6  # to workaround weights_only logic used in ogb
+pyarrow
+pyspark==3.5.1
+ogb
+neo4j
+psutil # for monitoring system resources
+matplotlib # for plotting
+tqdm # for progress bar
