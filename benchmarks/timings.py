@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
-from graphar.ml.torch import _Timer as _Timer  # re-exported; defined in torch.py to avoid reverse dep
+
+class _Timer:
+    """Context manager that appends elapsed seconds to store[name]."""
+
+    __slots__ = ("_name", "_store", "_t")
+
+    def __init__(self, name: str, store: dict) -> None:
+        self._name = name
+        self._store = store
+
+    def __enter__(self) -> _Timer:
+        self._t = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, *_) -> None:
+        if exc_type is None:
+            self._store[self._name].append(time.perf_counter() - self._t)
 
 
 @dataclass
