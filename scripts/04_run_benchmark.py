@@ -60,6 +60,7 @@ def _hardware_info() -> dict:
     return {
         "cpu_model": cpu_model,
         "cpu_physical_cores": psutil.cpu_count(logical=False),
+        "cpu_logical_cores": psutil.cpu_count(logical=True),
         "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 1),
         "disk_type": disk_type,
     }
@@ -105,6 +106,8 @@ class _SystemMonitor:
                 else 0
             )
             try:
+                # cpu_percent is process-wide, summed over all threads and logical CPUs,
+                # so it can legally exceed 100% × cpu_physical_cores on HT/SMT machines.
                 cpu = self._proc.cpu_percent()
                 rss = self._proc.memory_info().rss / 1e6
             except psutil.NoSuchProcess:

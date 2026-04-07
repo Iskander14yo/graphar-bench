@@ -39,6 +39,6 @@ class BatchTimings:
 @dataclass
 class SystemSample:
     timestamp_ms: int       # ms since epoch start
-    cpu_pct: float          # process CPU %
+    cpu_pct: float          # process CPU %, summed over all threads/logical CPUs; can exceed 100% × physical_cores
     rss_mb: float           # process RSS
     disk_read_mb_s: float   # system-wide disk read throughput
