@@ -216,16 +216,19 @@ def _make_pyg_loader(config: BenchmarkConfig) -> PyGNeighborLoader:
 
 def _run_epoch(
     loader, iter_fn, monitor: _SystemMonitor, desc: str
-) -> tuple[list[BatchTimings], list[SystemSample]]:
+) -> tuple[list[BatchTimings], list[SystemSample], float]:
+    """Returns (batch_timings, system_samples, epoch_time_ms)."""
     total = len(loader) # if hasattr(loader, "__len__") else None
     monitor.start()
     batch_timings: list[BatchTimings] = []
+    t0 = time.perf_counter()
     with tqdm(iter_fn(loader), total=total, desc=desc, unit="batch", leave=False) as pbar:
         for _batch, bt in pbar:
             batch_timings.append(bt)
             pbar.set_postfix({"ms": f"{bt.total_ms:.0f}"})
+    epoch_time_ms = (time.perf_counter() - t0) * 1000
     system_samples = monitor.stop()
-    return batch_timings, system_samples
+    return batch_timings, system_samples, epoch_time_ms
 
 
 # ---------------------------------------------------------------------------
@@ -252,16 +255,17 @@ def _run_loader(
             except Exception as e:
                 print(f"  WARNING: cache clear failed: {e}", flush=True)
 
-        batch_timings, system_samples = _run_epoch(loader, iter_fn, monitor, desc=f"{loader_name}/{run_type}")
+        batch_timings, system_samples, epoch_time_ms = _run_epoch(loader, iter_fn, monitor, desc=f"{loader_name}/{run_type}")
         mean_ms = (
             sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
             if batch_timings else 0.0
         )
-        print(f"    {len(batch_timings)} batches, mean={mean_ms:.1f} ms", flush=True)
+        print(f"    {len(batch_timings)} batches, mean={mean_ms:.1f} ms, epoch={epoch_time_ms/1000:.1f} s", flush=True)
 
         runs.append({
             "run_id": run_id,
             "type": run_type,
+            "epoch_time_ms": epoch_time_ms,
             "batches": [dataclasses.asdict(bt) for bt in batch_timings],
             "system_metrics": [dataclasses.asdict(ss) for ss in system_samples],
         })

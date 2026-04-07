@@ -65,7 +65,7 @@ def load_results(path: Path) -> dict[str, dict[str, dict]]:
     """Load loader JSONs from a run dir or all run subdirs of a parent dir.
 
     Returns:
-        {loader: {run_type: {"batches": [...], "system_metrics": [...]}}}
+        {loader: {run_type: {"batches": [...], "system_metrics": [...], "epoch_times_ms": [...]}}}
     """
     run_dirs = [path] if _is_run_dir(path) else sorted(
         d for d in path.iterdir() if d.is_dir() and _is_run_dir(d)
@@ -83,9 +83,13 @@ def load_results(path: Path) -> dict[str, dict[str, dict]]:
             agg.setdefault(loader, {})
             for run in data.get("runs", []):
                 rt = run.get("type", "warm")
-                bucket = agg[loader].setdefault(rt, {"batches": [], "system_metrics": []})
+                bucket = agg[loader].setdefault(
+                    rt, {"batches": [], "system_metrics": [], "epoch_times_ms": []}
+                )
                 bucket["batches"].extend(run.get("batches", []))
                 bucket["system_metrics"].extend(run.get("system_metrics", []))
+                if "epoch_time_ms" in run:
+                    bucket["epoch_times_ms"].append(run["epoch_time_ms"])
     return agg
 
 
@@ -107,19 +111,31 @@ def _ordered_loaders(agg: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _data_table1(agg: dict) -> tuple[list[str], list[list[str]]]:
-    headers = ["Loader", "run", "mean (ms)", "P50 (ms)", "P95 (ms)", "Nodes", "Edges"]
+    headers = ["Loader", "run", "mean (ms)", "P50 (ms)", "P95 (ms)", "Epoch (s)", "Batches/s", "Nodes", "Edges"]
     rows = []
     for loader in _ordered_loaders(agg):
         for rt in RUN_TYPES:
             if rt not in agg[loader]:
                 continue
-            batches = _non_profiled(agg[loader][rt]["batches"], loader)
+            bucket = agg[loader][rt]
+            batches = _non_profiled(bucket["batches"], loader)
             totals = [b["total_ms"] for b in batches]
+            epoch_times = bucket["epoch_times_ms"]
+            # throughput: total batches / total epoch time avoids bias from unequal run counts
+            if epoch_times:
+                mean_epoch_s = _mean(epoch_times) / 1000
+                batches_per_epoch = len(batches) / len(epoch_times)
+                throughput = batches_per_epoch / mean_epoch_s
+            else:
+                mean_epoch_s = float("nan")
+                throughput = float("nan")
             rows.append([
                 loader, rt,
                 _fmt(_mean(totals)),
                 _fmt(_pct(totals, 50)),
                 _fmt(_pct(totals, 95)),
+                _fmt(mean_epoch_s),
+                _fmt(throughput),
                 _fmt(_mean([b["sampled_nodes"] for b in batches]), ".0f"),
                 _fmt(_mean([b["sampled_edges"] for b in batches]), ".0f"),
             ])
