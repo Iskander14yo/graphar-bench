@@ -7,19 +7,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 BENCHMARK_CONFIG="${1:-graphar-bench/config/benchmark.yaml}"
-SPARK_JAR="${2:-${GRAPHAR_SPARK_JAR:-}}"
 
 echo "Environment setup"
 bash graphar-bench/scripts/00_setup.sh
 
-if [[ -z "${SPARK_JAR}" ]]; then
-  SPARK_JAR="$(bash graphar-bench/scripts/resolve_spark_jar.sh)"
+echo "Build C++ GAR converter"
+CPP_BUILD_DIR="graphar-bench/convert/build"
+if [[ ! -f "${CPP_BUILD_DIR}/ogbn_to_gar" ]]; then
+  mkdir -p "${CPP_BUILD_DIR}"
+  cmake -S graphar-bench/convert -B "${CPP_BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 fi
-
-if [[ ! -f "${SPARK_JAR}" ]]; then
-  echo "Failed to detect GraphAr Spark JAR. Run graphar-bench/scripts/00_setup.sh first."
-  exit 1
-fi
+cmake --build "${CPP_BUILD_DIR}" --parallel "$(nproc)"
 
 echo "Download dataset (benchmark config: ${BENCHMARK_CONFIG})"
 .venv/bin/python graphar-bench/scripts/01_download.py --config "${BENCHMARK_CONFIG}"
