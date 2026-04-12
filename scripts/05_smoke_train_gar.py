@@ -18,6 +18,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPTS))
 from benchmark_yaml import DEFAULT_PATH, BenchmarkConfig, load_config  # noqa: E402
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from ogb.nodeproppred import NodePropPredDataset
@@ -44,15 +45,44 @@ class _GraphSAGE(torch.nn.Module):
         return self.conv2(x, edge_index)
 
 
+def _load_labels_and_split(config: BenchmarkConfig) -> tuple[torch.Tensor, list[int]]:
+    """Load labels and train split without materialising the full graph in RAM.
+
+    Uses OGB's split CSV files directly and reads raw label files with numpy,
+    avoiding the expensive NodePropPredDataset.__getitem__ call.
+    """
+    # Skip pre_process (graph loading) — we only need split indices.
+    class _SplitOnly(NodePropPredDataset):
+        def pre_process(self_inner) -> None:  # noqa: N805
+            pass
+
+    ds = _SplitOnly(name=config.dataset, root=config.ogb_root)
+    train_nodes: list[int] = ds.get_idx_split()["train"].tolist()
+
+    raw_dir = Path(config.ogb_root) / config.dataset.replace("-", "_") / "raw"
+    label_npz = raw_dir / "node-label.npz"
+    label_csv = raw_dir / "node-label.csv.gz"
+
+    if label_npz.exists():
+        # Binary format (e.g. ogbn-papers100M): float32 labels, NaN = unlabeled → -1.
+        raw = np.load(str(label_npz))["node_label"].reshape(-1)
+        if raw.dtype == np.float32:
+            labels_1d = np.where(np.isnan(raw), np.int64(-1), raw.astype(np.int64))
+        else:
+            labels_1d = raw.astype(np.int64, copy=False)
+    else:
+        # CSV format (e.g. ogbn-products): integer labels, one per line.
+        labels_1d = np.genfromtxt(str(label_csv), delimiter=",", dtype=np.int64).reshape(-1)
+
+    return torch.from_numpy(labels_1d), train_nodes
+
+
 def smoke_train_gar(config: BenchmarkConfig) -> None:
     torch.manual_seed(_SEED)
 
-    print(f"Loading OGB labels from {config.ogb_root}...")
-    ogb = NodePropPredDataset(name=config.dataset, root=config.ogb_root)
-    _, labels_np = ogb[0]
-    labels_all = torch.from_numpy(labels_np.squeeze()).long()
+    print(f"Loading labels and split indices from {config.ogb_root}...")
+    labels_all, train_nodes = _load_labels_and_split(config)
     num_classes = int(labels_all.max().item()) + 1
-    train_nodes = ogb.get_idx_split()["train"].tolist()
 
     graph_yml = Path(config.gar_root) / config.dataset / f"{config.dataset}.graph.yml"
     print(f"Loading GAR graph from {graph_yml}...")

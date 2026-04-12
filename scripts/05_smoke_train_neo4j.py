@@ -27,11 +27,11 @@ from benchmark_yaml import DEFAULT_PATH, BenchmarkConfig, load_config  # noqa: E
 
 import pyarrow  # noqa: F401 - must precede graphar C extension
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable, DatabaseUnavailable
-from ogb.nodeproppred import NodePropPredDataset
 from torch_geometric.nn import SAGEConv
 
 from exps.benchmarks.neo4j_loader import Neo4jNeighborLoader, iter_batches
@@ -42,6 +42,29 @@ _HIDDEN = 32
 _SEED = 42
 _NUM_NEIGHBORS = [3, 2]
 _FEATURES = ["feat"]
+
+
+def _load_labels(config: BenchmarkConfig) -> torch.Tensor:
+    """Load node labels without materialising the full graph in RAM.
+
+    Reads raw OGB label files with numpy, avoiding NodePropPredDataset.__getitem__.
+    """
+    raw_dir = Path(config.ogb_root) / config.dataset.replace("-", "_") / "raw"
+    label_npz = raw_dir / "node-label.npz"
+    label_csv = raw_dir / "node-label.csv.gz"
+
+    if label_npz.exists():
+        # Binary format (e.g. ogbn-papers100M): float32 labels, NaN = unlabeled → -1.
+        raw = np.load(str(label_npz))["node_label"].reshape(-1)
+        if raw.dtype == np.float32:
+            labels_1d = np.where(np.isnan(raw), np.int64(-1), raw.astype(np.int64))
+        else:
+            labels_1d = raw.astype(np.int64, copy=False)
+    else:
+        # CSV format (e.g. ogbn-products): integer labels, one per line.
+        labels_1d = np.genfromtxt(str(label_csv), delimiter=",", dtype=np.int64).reshape(-1)
+
+    return torch.from_numpy(labels_1d)
 
 
 # ---------------------------------------------------------------------------
@@ -241,10 +264,8 @@ def smoke_neo4j(config: BenchmarkConfig) -> None:
 
     _assert_neo4j_up(uri, database)
 
-    print(f"Loading OGB labels from {config.ogb_root}...")
-    ogb = NodePropPredDataset(name=config.dataset, root=config.ogb_root)
-    _, labels_np = ogb[0]
-    labels_all = torch.from_numpy(labels_np.squeeze()).long()
+    print(f"Loading labels from {config.ogb_root}...")
+    labels_all = _load_labels(config)
     num_classes = int(labels_all.max().item()) + 1
     results: dict[str, bool] = {}
 
