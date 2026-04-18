@@ -19,15 +19,19 @@
 
 // Converts OGB-style data to GraphAR format.
 //
-// Reads Arrow IPC files written by 02_load_gar.py:
-//   vertices.arrow  columns: id (int64), f000..fFFF (float32), label (int64)
-//   edges.arrow     columns: src_id (int64), dst_id (int64)
+// Reads Arrow IPC files written by 02_load_gar.py.
+//
+// Small datasets (CSV format): single edges.arrow with src_id + dst_id columns.
+// Large datasets (binary format): vertices.arrow streamed in VCS-row batches,
+//   edges_src.arrow (src_id) + edges_dst.arrow (dst_id) streamed to avoid a
+//   single 26 GB allocation.
 //
 // Output: GraphAR directory tree at --output-dir.
 //
 // Usage:
 //   ogbn_to_gar --output-dir <dir> --name <dataset> --data-dir <dir>
 //               --vertex-chunk <V> --edge-chunk <E>
+//               [--num-vertices N --feat-dim F]   # binary format only
 
 #include <algorithm>
 #include <cassert>
@@ -92,7 +96,7 @@ namespace fs = std::filesystem;
   }                                                           \
   auto var = std::move(_ar_##var).ValueUnsafe();
 
-// Read an Arrow IPC file into a Table.
+// Read an Arrow IPC file into a Table (loads all batches eagerly).
 std::shared_ptr<arrow::Table> read_ipc_table(const std::string& path) {
   ARROW_ASSIGN(infile, arrow::io::ReadableFile::Open(path), "open " + path);
   ARROW_ASSIGN(reader, arrow::ipc::RecordBatchFileReader::Open(infile),
@@ -146,6 +150,10 @@ struct Args {
   std::string data_dir;
   int64_t     vertex_chunk_size = 0;
   int64_t     edge_chunk_size   = 0;
+  // Optional: provided for large binary datasets so vertices can be streamed
+  // without loading the full Arrow table to discover V and F.
+  int64_t     num_vertices = 0;
+  int         feat_dim     = 0;
 };
 
 static Args parse_args(int argc, char* argv[]) {
@@ -158,12 +166,15 @@ static Args parse_args(int argc, char* argv[]) {
     else if (flag == "--data-dir")      { a.data_dir          = val;              ++i; }
     else if (flag == "--vertex-chunk")  { a.vertex_chunk_size = std::stoll(val);  ++i; }
     else if (flag == "--edge-chunk")    { a.edge_chunk_size   = std::stoll(val);  ++i; }
+    else if (flag == "--num-vertices")  { a.num_vertices      = std::stoll(val);  ++i; }
+    else if (flag == "--feat-dim")      { a.feat_dim          = std::stoi(val);   ++i; }
   }
   if (a.output_dir.empty() || a.dataset_name.empty() || a.data_dir.empty() ||
       a.vertex_chunk_size <= 0 || a.edge_chunk_size <= 0) {
     std::cerr << "Usage: ogbn_to_gar"
               << " --output-dir <dir> --name <dataset> --data-dir <dir>"
-              << " --vertex-chunk <V> --edge-chunk <E>\n";
+              << " --vertex-chunk <V> --edge-chunk <E>"
+              << " [--num-vertices N --feat-dim F]\n";
     std::exit(1);
   }
   return a;
@@ -184,22 +195,39 @@ int main(int argc, char* argv[]) {
   const int64_t ECS = args.edge_chunk_size;
 
   // ─────────────────────────────────────────────
-  // 1. Read vertices.arrow — schema tells us V and F
+  // 1. Determine V and F
   // ─────────────────────────────────────────────
-  std::cout << "[1/4] Reading vertices.arrow...\n";
-  auto v_table = read_ipc_table(args.data_dir + "/vertices.arrow");
-  const int64_t V = v_table->num_rows();
-  // feature columns are everything except id (first) and label (last)
-  const int F = v_table->num_columns() - 2;
-  assert(F > 0);
-  std::cout << "      " << V << " vertices, " << F << " features\n";
+  // For large binary datasets Python passes --num-vertices and --feat-dim so
+  // that we can build the schema without loading the full vertex table.
+  // For small CSV datasets V and F are derived from the Arrow file.
 
-  const int64_t n_vchunks = (V + VCS - 1) / VCS;
+  const bool stream_vertices = (args.num_vertices > 0 && args.feat_dim > 0);
+  int64_t V = args.num_vertices;
+  int     F = args.feat_dim;
+
+  if (!stream_vertices) {
+    // Small dataset: load the full vertex table once.
+    std::cout << "[1/4] Reading vertices.arrow...\n";
+  } else {
+    std::cout << "[1/4] Streaming vertices.arrow (" << V << " rows, F=" << F << ")...\n";
+    // F is already set from args; open the reader to validate schema.
+    ARROW_ASSIGN(v_probe, arrow::io::ReadableFile::Open(args.data_dir + "/vertices.arrow"),
+                 "open vertices");
+    ARROW_ASSIGN(v_probe_reader, arrow::ipc::RecordBatchFileReader::Open(v_probe),
+                 "ipc vertices probe");
+    // F from schema: num_fields - 2 (id + label)
+    int F_from_schema = v_probe_reader->schema()->num_fields() - 2;
+    if (F_from_schema != F) {
+      std::cerr << "Warning: --feat-dim=" << F << " but schema has "
+                << F_from_schema << " feature columns; using schema value.\n";
+      F = F_from_schema;
+    }
+  }
 
   // ─────────────────────────────────────────────
   // 2. Build GraphAR schema
   // ─────────────────────────────────────────────
-  std::cout << "[2/4] Building schema...\n";
+  std::cout << "[2/4] Building schema (F=" << F << ")...\n";
   auto version = graphar::InfoVersion::Parse("gar/v1").value();
   auto groups  = compute_vertex_groups(F);
 
@@ -224,57 +252,123 @@ int main(int argc, char* argv[]) {
 
   auto adj_src = graphar::CreateAdjacentList(
       graphar::AdjListType::ordered_by_source, graphar::FileType::PARQUET);
-  auto adj_dst = graphar::CreateAdjacentList(
-      graphar::AdjListType::ordered_by_dest, graphar::FileType::PARQUET);
 
-  auto edge_info = graphar::CreateEdgeInfo(
-      "node", "edge", "node",
-      ECS, VCS, VCS,
-      /*directed=*/true,
-      {adj_src, adj_dst},
-      {},
-      "edge/node_edge_node/",
-      version);
+  auto make_edge_info = [&](int64_t /*v_count*/) {
+    return graphar::CreateEdgeInfo(
+        "node", "edge", "node",
+        ECS, VCS, VCS,
+        /*directed=*/true,
+        {adj_src},
+        {},
+        "edge/node_edge_node/",
+        version);
+  };
+
+  // ─────────────────────────────────────────────
+  // 3. Write vertices
+  // ─────────────────────────────────────────────
+  CHECK_RESULT(v_writer,
+               graphar::VertexPropertyWriter::Make(vertex_info, prefix),
+               "make VertexPropertyWriter");
+
+  if (stream_vertices) {
+    // Each Python Arrow batch = exactly VCS rows (aligned on purpose), so
+    // batch_index == chunk_index and we call WriteTable once per batch.
+    ARROW_ASSIGN(v_infile, arrow::io::ReadableFile::Open(args.data_dir + "/vertices.arrow"),
+                 "open vertices");
+    ARROW_ASSIGN(v_reader, arrow::ipc::RecordBatchFileReader::Open(v_infile),
+                 "ipc vertices");
+
+    int num_batches = v_reader->num_record_batches();
+    std::cout << "      " << num_batches << " batch(es) to write\n";
+
+    for (int i = 0; i < num_batches; ++i) {
+      ARROW_ASSIGN(batch, v_reader->ReadRecordBatch(i), "read vertex batch");
+      ARROW_ASSIGN(table, arrow::Table::FromRecordBatches({batch}),
+                   "vertex batch to table");
+      // Chunk index equals batch index because Python wrote exactly VCS rows
+      // per batch (except possibly the last).
+      CHECK_OK(v_writer->WriteTable(table, i), "WriteTable vertices");
+      std::cout << "      chunk " << (i + 1) << "/" << num_batches << "\r" << std::flush;
+    }
+    std::cout << "\n";
+  } else {
+    // Small dataset: load the whole table at once.
+    auto v_table = read_ipc_table(args.data_dir + "/vertices.arrow");
+    V = v_table->num_rows();
+    F = v_table->num_columns() - 2;
+    std::cout << "      " << V << " vertices, " << F << " features\n";
+
+    int64_t n_vchunks = (V + VCS - 1) / VCS;
+    std::cout << "      Writing " << n_vchunks << " vertex chunk(s)...\n";
+    CHECK_OK(v_writer->WriteTable(v_table, 0), "WriteTable vertices");
+    v_table.reset();
+  }
+
+  CHECK_OK(v_writer->WriteVerticesNum(V), "WriteVerticesNum");
+  const int64_t n_vchunks = (V + VCS - 1) / VCS;
+
+  // ─────────────────────────────────────────────
+  // 4. Read edges and write adj lists
+  // ─────────────────────────────────────────────
+  auto edge_info = make_edge_info(V);
   CHECK_OK(edge_info->Save(prefix + "node_edge_node.edge.yaml"), "save edge yml");
-
   auto graph_info = graphar::CreateGraphInfo(
       args.dataset_name, {vertex_info}, {edge_info}, {}, prefix, version);
   CHECK_OK(graph_info->Save(prefix + args.dataset_name + ".graph.yml"),
            "save graph yml");
 
-  // ─────────────────────────────────────────────
-  // 3. Write vertices
-  // ─────────────────────────────────────────────
-  std::cout << "[3/4] Writing " << n_vchunks << " vertex chunk(s)...\n";
-  CHECK_RESULT(v_writer,
-               graphar::VertexPropertyWriter::Make(vertex_info, prefix),
-               "make VertexPropertyWriter");
-  // WriteTable slices the full table into vertex chunks internally.
-  CHECK_OK(v_writer->WriteTable(v_table, 0), "WriteTable vertices");
-  CHECK_OK(v_writer->WriteVerticesNum(V), "WriteVerticesNum");
+  // Detect whether we have split edge files (binary format) or a combined
+  // edges.arrow (CSV format).
+  const std::string src_path = args.data_dir + "/edges_src.arrow";
+  const std::string dst_path = args.data_dir + "/edges_dst.arrow";
+  const std::string combined_path = args.data_dir + "/edges.arrow";
+  const bool split_edges = fs::exists(src_path) && fs::exists(dst_path);
 
-  // Release vertex table before loading edges
-  v_table.reset();
+  int64_t E = 0;
+  const int64_t* src_ptr = nullptr;
+  const int64_t* dst_ptr = nullptr;
 
-  // ─────────────────────────────────────────────
-  // 4. Read edges.arrow and write adj lists
-  // ─────────────────────────────────────────────
-  std::cout << "[4/4] Reading edges.arrow...\n";
-  auto e_table_raw = read_ipc_table(args.data_dir + "/edges.arrow");
-  const int64_t E = e_table_raw->num_rows();
-  std::cout << "      " << E << " edges\n";
+  // Keep these in scope until the sort+write is done.
+  std::shared_ptr<arrow::Table> src_combined, dst_combined;
+  std::shared_ptr<arrow::Table> e_combined;
 
-  // The file is written in batches, so each column has multiple chunks.
-  // Merge into one contiguous chunk so raw_values() covers all rows.
-  ARROW_ASSIGN(e_table, e_table_raw->CombineChunks(), "combine edge chunks");
-  e_table_raw.reset();
+  if (split_edges) {
+    std::cout << "[4/4] Loading edges_src.arrow + edges_dst.arrow...\n";
+    auto src_raw = read_ipc_table(src_path);
+    auto dst_raw = read_ipc_table(dst_path);
+    E = src_raw->num_rows();
+    assert(dst_raw->num_rows() == E);
+    std::cout << "      " << E << " edges\n";
 
-  auto src_col = std::static_pointer_cast<arrow::Int64Array>(
-      e_table->column(0)->chunk(0));
-  auto dst_col = std::static_pointer_cast<arrow::Int64Array>(
-      e_table->column(1)->chunk(0));
-  const int64_t* src_ptr = src_col->raw_values();
-  const int64_t* dst_ptr = dst_col->raw_values();
+    ARROW_ASSIGN(src_c, src_raw->CombineChunks(), "combine src chunks");
+    ARROW_ASSIGN(dst_c, dst_raw->CombineChunks(), "combine dst chunks");
+    src_raw.reset();
+    dst_raw.reset();
+    src_combined = src_c;
+    dst_combined = dst_c;
+
+    src_ptr = std::static_pointer_cast<arrow::Int64Array>(
+        src_combined->column(0)->chunk(0))->raw_values();
+    dst_ptr = std::static_pointer_cast<arrow::Int64Array>(
+        dst_combined->column(0)->chunk(0))->raw_values();
+  } else {
+    std::cout << "[4/4] Loading edges.arrow...\n";
+    auto e_table_raw = read_ipc_table(combined_path);
+    E = e_table_raw->num_rows();
+    std::cout << "      " << E << " edges\n";
+
+    // The file is written in batches, so columns are chunked.
+    // Merge into contiguous arrays for raw_values().
+    ARROW_ASSIGN(e_c, e_table_raw->CombineChunks(), "combine edge chunks");
+    e_table_raw.reset();
+    e_combined = e_c;
+
+    src_ptr = std::static_pointer_cast<arrow::Int64Array>(
+        e_combined->column(0)->chunk(0))->raw_values();
+    dst_ptr = std::static_pointer_cast<arrow::Int64Array>(
+        e_combined->column(1)->chunk(0))->raw_values();
+  }
 
   std::vector<int64_t> idx(E);
   std::iota(idx.begin(), idx.end(), 0);
@@ -328,7 +422,6 @@ int main(int argc, char* argv[]) {
   };
 
   write_adj(graphar::AdjListType::ordered_by_source, src_ptr, "source");
-  write_adj(graphar::AdjListType::ordered_by_dest,   dst_ptr, "dest");
 
   std::cout << "Graph written to: " << prefix << "\n";
   return 0;
