@@ -229,29 +229,22 @@ def _data_neo4j_profile(agg: dict) -> tuple[list[str], list[list[str]]]:
 # ---------------------------------------------------------------------------
 
 _TABLES = [
-    ("table_1_main_comparison",       "Table 1: Main comparison",                 _data_table1),
-    ("table_2_stage_breakdown",       "Table 2: Stage breakdown (GAR and Neo4j)", _data_table2),
-    ("table_3_resource_usage",        "Table 3: Resource usage",                  _data_table3),
-    ("table_4_neo4j_profile_summary", "Neo4j PROFILE summary",                    _data_neo4j_profile),
+    ("Table 1: Main comparison",                 _data_table1),
+    ("Table 2: Stage breakdown (GAR and Neo4j)", _data_table2),
+    ("Table 3: Resource usage",                  _data_table3),
+    ("Neo4j PROFILE summary",                    _data_neo4j_profile),
 ]
 
 
 
-def _save_table_image(title: str, headers: list[str], rows: list[list[str]], path: Path) -> None:
-    import matplotlib.pyplot as plt
-
+def _render_table(ax, title: str, headers: list[str], rows: list[list[str]]) -> None:
     n_cols = len(headers)
     n_rows = len(rows)
+    ax.axis("off")
 
-    # Figure size: scale with content
     char_widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     total_chars = sum(char_widths)
-    fig_w = max(6.0, min(total_chars * 0.13, 26.0))
-    fig_h = max(1.2, n_rows * 0.38 + 1.0)
     font_size = 9 if n_cols <= 8 else 7
-
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.axis("off")
 
     col_w = [cw / total_chars for cw in char_widths]
     tbl = ax.table(
@@ -264,14 +257,12 @@ def _save_table_image(title: str, headers: list[str], rows: list[list[str]], pat
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(font_size)
 
-    # Header row
     for j in range(n_cols):
         cell = tbl[0, j]
         cell.set_facecolor("#2C5F8A")
         cell.set_text_props(color="white", fontweight="bold")
         cell.set_edgecolor("#1a3a5c")
 
-    # Data rows — alternating background
     for i in range(1, n_rows + 1):
         bg = "#EBF3FB" if i % 2 == 0 else "#FFFFFF"
         for j in range(n_cols):
@@ -280,17 +271,41 @@ def _save_table_image(title: str, headers: list[str], rows: list[list[str]], pat
             cell.set_edgecolor("#C8D8EA")
 
     ax.set_title(title, fontweight="bold", fontsize=font_size + 1, pad=10)
-    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    print(f"  Saved: {path}")
 
 
 def save_table_images(agg: dict, out_dir: Path) -> None:
+    import matplotlib.pyplot as plt
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    for fname, title, builder in _TABLES:
-        headers, rows = builder(agg)
-        if rows:
-            _save_table_image(title, headers, rows, out_dir / f"{fname}.png")
+
+    built = [(title, *builder(agg)) for title, builder in _TABLES]
+    built = [(t, h, r) for t, h, r in built if r]
+    if not built:
+        return
+
+    # Figure width scales with widest table; heights scale with each table's row count
+    fig_w = 0.0
+    heights = []
+    for _, headers, rows in built:
+        char_widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+        fig_w = max(fig_w, sum(char_widths) * 0.13)
+        heights.append(max(1.2, len(rows) * 0.38 + 1.0))
+    fig_w = max(6.0, min(fig_w, 26.0))
+    fig_h = sum(heights)
+
+    fig, axes = plt.subplots(
+        len(built), 1, figsize=(fig_w, fig_h),
+        gridspec_kw={"height_ratios": heights},
+    )
+    if len(built) == 1:
+        axes = [axes]
+    for ax, (title, headers, rows) in zip(axes, built):
+        _render_table(ax, title, headers, rows)
+
+    path = out_dir / "tables.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"  Saved: {path}")
 
 
 # ---------------------------------------------------------------------------
