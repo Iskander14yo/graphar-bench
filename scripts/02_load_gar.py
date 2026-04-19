@@ -29,6 +29,24 @@ def _ogb_raw_dir(ogb_root: str, dataset: str) -> Path:
     return Path(ogb_root) / dataset.replace("-", "_") / "raw"
 
 
+def _vertex_ipc_schema(feat_dim: int) -> pa.Schema:
+    """Non-nullable fields so Parquet omits definition levels on read."""
+    return pa.schema(
+        [pa.field("id", pa.int64(), nullable=False)]
+        + [pa.field(f"f{i:03d}", pa.float32(), nullable=False) for i in range(feat_dim)]
+        + [pa.field("label", pa.int64(), nullable=False)]
+    )
+
+
+def _edge_ipc_schema_two_col() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("src_id", pa.int64(), nullable=False),
+            pa.field("dst_id", pa.int64(), nullable=False),
+        ]
+    )
+
+
 def _is_binary_ogb(raw_dir: Path) -> bool:
     return (raw_dir / "data.npz").exists()
 
@@ -135,11 +153,7 @@ def _save_arrow_from_binary_ogb(
             labels_1d = flat.astype(np.int64, copy=False)
         del labels_raw
 
-        v_schema = pa.schema(
-            [("id", pa.int64())]
-            + [(f"f{i:03d}", pa.float32()) for i in range(F)]
-            + [("label", pa.int64())]
-        )
+        v_schema = _vertex_ipc_schema(F)
         row_bytes = F * 4  # node_feat is always float32 (verified from npy header)
 
         print(f"Streaming {N:,} vertices (F={F}) to vertices.arrow...")
@@ -176,8 +190,8 @@ def _save_arrow_from_binary_ogb(
     if _is_complete(edges_src_path, E) and _is_complete(edges_dst_path, E):
         print(f"Edge files already complete ({E:,} edges), skipping.")
     else:
-        src_schema = pa.schema([("src_id", pa.int64())])
-        dst_schema = pa.schema([("dst_id", pa.int64())])
+        src_schema = pa.schema([pa.field("src_id", pa.int64(), nullable=False)])
+        dst_schema = pa.schema([pa.field("dst_id", pa.int64(), nullable=False)])
 
         print(f"Streaming {E:,} edges to edges_src.arrow + edges_dst.arrow...")
         with zipfile.ZipFile(data_npz) as zf:
@@ -252,11 +266,7 @@ def _save_arrow(
     N, F = node_feat.shape
     labels_1d = labels.reshape(-1).astype(np.int64, copy=False)
 
-    v_schema = pa.schema(
-        [("id", pa.int64())]
-        + [(f"f{i:03d}", pa.float32()) for i in range(F)]
-        + [("label", pa.int64())]
-    )
+    v_schema = _vertex_ipc_schema(F)
     with pa_ipc.new_file(str(data_dir / "vertices.arrow"), v_schema) as w:
         for start in range(0, N, vertex_batch):
             end = min(start + vertex_batch, N)
@@ -269,7 +279,7 @@ def _save_arrow(
             w.write_batch(pa.record_batch(dict(zip(v_schema.names, arrays)), schema=v_schema))
 
     E = edge_index.shape[1]
-    e_schema = pa.schema([("src_id", pa.int64()), ("dst_id", pa.int64())])
+    e_schema = _edge_ipc_schema_two_col()
     with pa_ipc.new_file(str(data_dir / "edges.arrow"), e_schema) as w:
         for start in range(0, E, edge_batch):
             end = min(start + edge_batch, E)
