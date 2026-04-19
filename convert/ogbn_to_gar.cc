@@ -204,10 +204,21 @@ int main(int argc, char* argv[]) {
   const bool stream_vertices = (args.num_vertices > 0 && args.feat_dim > 0);
   int64_t V = args.num_vertices;
   int     F = args.feat_dim;
+  // Non-streaming: must load vertices.arrow *before* building vertex YAML so F is
+  // correct. (Previously F stayed 0 and node.vertex.yaml listed only id+label.)
+  std::shared_ptr<arrow::Table> v_table_eager;
 
   if (!stream_vertices) {
-    // Small dataset: load the full vertex table once.
     std::cout << "[1/4] Reading vertices.arrow...\n";
+    v_table_eager = read_ipc_table(args.data_dir + "/vertices.arrow");
+    V = v_table_eager->num_rows();
+    F = static_cast<int>(v_table_eager->num_columns()) - 2;
+    if (v_table_eager->num_columns() < 2 || F < 0) {
+      std::cerr << "vertices.arrow: expected columns id, …features…, label (got "
+                << v_table_eager->num_columns() << ").\n";
+      std::exit(1);
+    }
+    std::cout << "      " << V << " vertices, " << F << " features\n";
   } else {
     std::cout << "[1/4] Streaming vertices.arrow (" << V << " rows, F=" << F << ")...\n";
     // F is already set from args; open the reader to validate schema.
@@ -293,16 +304,10 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "\n";
   } else {
-    // Small dataset: load the whole table at once.
-    auto v_table = read_ipc_table(args.data_dir + "/vertices.arrow");
-    V = v_table->num_rows();
-    F = v_table->num_columns() - 2;
-    std::cout << "      " << V << " vertices, " << F << " features\n";
-
     int64_t n_vchunks = (V + VCS - 1) / VCS;
     std::cout << "      Writing " << n_vchunks << " vertex chunk(s)...\n";
-    CHECK_OK(v_writer->WriteTable(v_table, 0), "WriteTable vertices");
-    v_table.reset();
+    CHECK_OK(v_writer->WriteTable(v_table_eager, 0), "WriteTable vertices");
+    v_table_eager.reset();
   }
 
   CHECK_OK(v_writer->WriteVerticesNum(V), "WriteVerticesNum");
@@ -390,8 +395,10 @@ int main(int argc, char* argv[]) {
     db.Finish(&da).ok();
     return arrow::Table::Make(
         arrow::schema({
-            arrow::field(graphar::GeneralParams::kSrcIndexCol, arrow::int64()),
-            arrow::field(graphar::GeneralParams::kDstIndexCol, arrow::int64()),
+            arrow::field(graphar::GeneralParams::kSrcIndexCol, arrow::int64(),
+                         /*nullable=*/false),
+            arrow::field(graphar::GeneralParams::kDstIndexCol, arrow::int64(),
+                         /*nullable=*/false),
         }),
         {sa, da});
   };
