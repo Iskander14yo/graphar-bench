@@ -278,8 +278,15 @@ int main(int argc, char* argv[]) {
   // ─────────────────────────────────────────────
   // 3. Write vertices
   // ─────────────────────────────────────────────
+  // Dense float feature groups do not benefit from Parquet dictionary encoding
+  // and pay extra decode overhead on the read path.
+  auto vertex_writer_options =
+      graphar::WriterOptions::ParquetOptionBuilder()
+          .enable_dictionary(false)
+          .build();
   CHECK_RESULT(v_writer,
-               graphar::VertexPropertyWriter::Make(vertex_info, prefix),
+               graphar::VertexPropertyWriter::Make(
+                   vertex_info, prefix, vertex_writer_options),
                "make VertexPropertyWriter");
 
   if (stream_vertices) {
