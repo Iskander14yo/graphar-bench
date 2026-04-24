@@ -282,6 +282,7 @@ int main(int argc, char* argv[]) {
   // and pay extra decode overhead on the read path.
   auto vertex_writer_options =
       graphar::WriterOptions::ParquetOptionBuilder()
+          .compression(arrow::Compression::UNCOMPRESSED)
           .enable_dictionary(false)
           .build();
   CHECK_RESULT(v_writer,
