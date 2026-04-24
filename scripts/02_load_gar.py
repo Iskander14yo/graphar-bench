@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import re
 import struct
 import subprocess
@@ -11,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
 
@@ -35,15 +37,6 @@ def _vertex_ipc_schema(feat_dim: int) -> pa.Schema:
         [pa.field("id", pa.int64(), nullable=False)]
         + [pa.field(f"f{i:03d}", pa.float32(), nullable=False) for i in range(feat_dim)]
         + [pa.field("label", pa.int64(), nullable=False)]
-    )
-
-
-def _edge_ipc_schema_two_col() -> pa.Schema:
-    return pa.schema(
-        [
-            pa.field("src_id", pa.int64(), nullable=False),
-            pa.field("dst_id", pa.int64(), nullable=False),
-        ]
     )
 
 
@@ -242,51 +235,142 @@ def _save_arrow_from_binary_ogb(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CSV OGB format (e.g. ogbn-products) — small enough for the OGB API
+# CSV OGB format (e.g. ogbn-arxiv, ogbn-products)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_ogb_graph(dataset: str, root: str) -> tuple[dict, np.ndarray]:
-    from ogb.nodeproppred import NodePropPredDataset
+@functools.lru_cache(maxsize=None)
+def _ogb_meta(dataset: str) -> dict[str, object]:
+    import ogb.nodeproppred as ogb_nodeproppred
 
-    ogb = NodePropPredDataset(name=dataset, root=root)
-    graph, labels_raw = ogb[0]
-    return graph, np.asarray(labels_raw)
+    master_path = Path(ogb_nodeproppred.__file__).resolve().parent / "master.csv"
+    meta = pd.read_csv(master_path, index_col=0).T
+    if dataset not in meta.index:
+        raise KeyError(f"Dataset metadata not found in OGB master.csv: {dataset}")
+    return meta.loc[dataset].to_dict()
 
 
-def _save_arrow(
+def _csv_count(raw_dir: Path, name: str) -> int:
+    counts = pd.read_csv(raw_dir / name, compression="gzip", header=None, dtype=np.int64)
+    return int(counts.iloc[:, 0].sum())
+
+
+def _save_arrow_from_csv_ogb(
+    raw_dir: Path,
     data_dir: Path,
-    node_feat: np.ndarray,
-    labels: np.ndarray,
-    edge_index: np.ndarray,
     vertex_batch: int,
     edge_batch: int,
+    add_inverse_edge: bool,
 ) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    N, F = node_feat.shape
-    labels_1d = labels.reshape(-1).astype(np.int64, copy=False)
+    feat_path = raw_dir / "node-feat.csv.gz"
+    label_path = raw_dir / "node-label.csv.gz"
+    edge_path = raw_dir / "edge.csv.gz"
 
-    v_schema = _vertex_ipc_schema(F)
-    with pa_ipc.new_file(str(data_dir / "vertices.arrow"), v_schema) as w:
-        for start in range(0, N, vertex_batch):
-            end = min(start + vertex_batch, N)
-            chunk = node_feat[start:end]
-            arrays = (
-                [pa.array(np.arange(start, end, dtype=np.int64))]
-                + [pa.array(chunk[:, i]) for i in range(F)]
-                + [pa.array(labels_1d[start:end])]
-            )
-            w.write_batch(pa.record_batch(dict(zip(v_schema.names, arrays)), schema=v_schema))
+    N = _csv_count(raw_dir, "num-node-list.csv.gz")
+    E = _csv_count(raw_dir, "num-edge-list.csv.gz")
+    feat_probe = pd.read_csv(feat_path, compression="gzip", header=None, nrows=1)
+    if feat_probe.empty:
+        raise ValueError(f"node-feat.csv.gz is empty: {feat_path}")
+    F = feat_probe.shape[1]
 
-    E = edge_index.shape[1]
-    e_schema = _edge_ipc_schema_two_col()
-    with pa_ipc.new_file(str(data_dir / "edges.arrow"), e_schema) as w:
-        for start in range(0, E, edge_batch):
-            end = min(start + edge_batch, E)
-            w.write_batch(pa.record_batch({
-                "src_id": pa.array(edge_index[0, start:end], type=pa.int64()),
-                "dst_id": pa.array(edge_index[1, start:end], type=pa.int64()),
-            }, schema=e_schema))
+    vertices_path = data_dir / "vertices.arrow"
+    edges_src_path = data_dir / "edges_src.arrow"
+    edges_dst_path = data_dir / "edges_dst.arrow"
+
+    if _is_complete(vertices_path, N):
+        print(f"vertices.arrow already complete ({N:,} rows), skipping.")
+    else:
+        v_schema = _vertex_ipc_schema(F)
+        feat_iter = pd.read_csv(
+            feat_path,
+            compression="gzip",
+            header=None,
+            dtype=np.float32,
+            chunksize=vertex_batch,
+        )
+        label_iter = pd.read_csv(
+            label_path,
+            compression="gzip",
+            header=None,
+            chunksize=vertex_batch,
+        )
+        print(f"Streaming {N:,} vertices (F={F}) to vertices.arrow...")
+        with pa_ipc.new_file(str(vertices_path), v_schema) as w:
+            start = 0
+            for feat_chunk, label_chunk in zip(feat_iter, label_iter, strict=True):
+                chunk = feat_chunk.to_numpy(dtype=np.float32, copy=False)
+                labels_1d = label_chunk.to_numpy().reshape(-1).astype(np.int64, copy=False)
+                if chunk.ndim != 2 or chunk.shape[1] != F:
+                    raise ValueError(f"Expected node_feat chunk shape (*, {F}), got {chunk.shape}")
+                if chunk.shape[0] != labels_1d.shape[0]:
+                    raise ValueError(
+                        f"Feature/label chunk row mismatch: {chunk.shape[0]} vs {labels_1d.shape[0]}"
+                    )
+                end = start + chunk.shape[0]
+                arrays = (
+                    [pa.array(np.arange(start, end, dtype=np.int64))]
+                    + [pa.array(chunk[:, i]) for i in range(F)]
+                    + [pa.array(labels_1d)]
+                )
+                w.write_batch(pa.record_batch(dict(zip(v_schema.names, arrays)), schema=v_schema))
+                start = end
+                print(f"  {start:,}/{N:,}", end="\r", flush=True)
+        print()
+        if start != N:
+            raise ValueError(f"Expected {N} vertices, wrote {start}")
+        _mark_complete(vertices_path, N)
+        print(f"vertices.arrow done ({N:,} rows).")
+
+    total_edges = E * (2 if add_inverse_edge else 1)
+    if _is_complete(edges_src_path, total_edges) and _is_complete(edges_dst_path, total_edges):
+        print(f"Edge files already complete ({total_edges:,} edges), skipping.")
+        return
+
+    src_schema = pa.schema([pa.field("src_id", pa.int64(), nullable=False)])
+    dst_schema = pa.schema([pa.field("dst_id", pa.int64(), nullable=False)])
+    edge_iter = pd.read_csv(
+        edge_path,
+        compression="gzip",
+        header=None,
+        dtype=np.int64,
+        chunksize=edge_batch,
+    )
+    print(
+        f"Streaming {E:,} edges to edges_src.arrow + edges_dst.arrow"
+        + (" with inverse edges..." if add_inverse_edge else "...")
+    )
+    with pa_ipc.new_file(str(edges_src_path), src_schema) as sw:
+        with pa_ipc.new_file(str(edges_dst_path), dst_schema) as dw:
+            done = 0
+            for edge_chunk in edge_iter:
+                chunk = edge_chunk.to_numpy(dtype=np.int64, copy=False)
+                if chunk.ndim != 2 or chunk.shape[1] != 2:
+                    raise ValueError(f"Expected edge chunk shape (*, 2), got {chunk.shape}")
+                src = chunk[:, 0]
+                dst = chunk[:, 1]
+                sw.write_batch(
+                    pa.record_batch({"src_id": pa.array(src, type=pa.int64())}, schema=src_schema)
+                )
+                dw.write_batch(
+                    pa.record_batch({"dst_id": pa.array(dst, type=pa.int64())}, schema=dst_schema)
+                )
+                if add_inverse_edge:
+                    sw.write_batch(
+                        pa.record_batch({"src_id": pa.array(dst, type=pa.int64())}, schema=src_schema)
+                    )
+                    dw.write_batch(
+                        pa.record_batch({"dst_id": pa.array(src, type=pa.int64())}, schema=dst_schema)
+                    )
+                done += chunk.shape[0]
+                written = done * (2 if add_inverse_edge else 1)
+                print(f"  {written:,}/{total_edges:,}", end="\r", flush=True)
+    print()
+    if done != E:
+        raise ValueError(f"Expected {E} edges, wrote {done}")
+    _mark_complete(edges_src_path, total_edges)
+    _mark_complete(edges_dst_path, total_edges)
+    print(f"Edge files done ({total_edges:,} edges).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -326,23 +410,23 @@ def convert_ogb_to_gar(config: BenchmarkConfig) -> None:
         # Pass known dimensions so C++ can stream vertices without reading the full table.
         extra_args = ["--num-vertices", str(num_vertices), "--feat-dim", str(feat_dim)]
     else:
-        graph, labels = _load_ogb_graph(dataset, config.ogb_root)
-        node_feat: np.ndarray = graph["node_feat"]
-        edge_index: np.ndarray = graph["edge_index"]
+        meta = _ogb_meta(dataset)
+        if str(meta.get("has_edge_attr", "")).lower() == "true":
+            raise NotImplementedError(f"Streaming CSV edge attributes are not supported for {dataset}")
+        for key in ("additional node files", "additional edge files"):
+            value = str(meta.get(key, "")).lower()
+            if value not in {"", "none", "nan"}:
+                raise NotImplementedError(
+                    f"Streaming CSV auxiliary files are not supported for {dataset}: {key}"
+                )
 
-        if node_feat.ndim != 2:
-            raise ValueError(f"Expected node_feat to be 2D, got shape={node_feat.shape}")
-        if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-            raise ValueError(f"Expected edge_index shape (2, E), got shape={edge_index.shape}")
-
-        print("Writing Arrow IPC files for C++ converter...")
-        _save_arrow(
+        print(f"CSV OGB format detected for {dataset}, streaming from raw files.")
+        _save_arrow_from_csv_ogb(
+            raw_dir=raw_dir,
             data_dir=data_dir,
-            node_feat=node_feat,
-            labels=labels,
-            edge_index=edge_index,
             vertex_batch=g.vertex_write_batch_size,
             edge_batch=g.edge_write_batch_size,
+            add_inverse_edge=str(meta.get("add_inverse_edge", "")).lower() == "true",
         )
 
     cmd = [
