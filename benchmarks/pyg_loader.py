@@ -27,9 +27,16 @@ class PyGNeighborLoader:
         num_neighbors: list[int],
         batch_size: int = 128,
         shuffle: bool = True,
+        num_features: int | None = None,
     ) -> None:
         ogb = PygNodePropPredDataset(name=dataset_name, root=ogb_root)
         self._data = cast(Data, ogb[0])
+        if num_features is not None and self._data.x is not None:
+            if self._data.x.size(1) < num_features:
+                raise ValueError(
+                    f"Requested num_features={num_features}, got {self._data.x.size(1)}"
+                )
+            self._data.x = self._data.x[:, :num_features].contiguous()
         self._loader = NeighborLoader(
             self._data,
             num_neighbors=num_neighbors,

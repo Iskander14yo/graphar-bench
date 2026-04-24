@@ -170,8 +170,8 @@ def _clear_caches(loader_name: str) -> None:
 
 def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
     g = config.gar
-    graph_info = gar.GraphInfo.load(str(Path(g.graph_path).resolve()))
-    features = [f"f{i:03d}" for i in range(g.num_features)]
+    graph_info = gar.GraphInfo.load(str(Path(config.gar_graph_path).resolve()))
+    features = [f"f{i:03d}" for i in range(config.num_features)]
     return GARNeighborLoader(
         graph_info,
         vertex_type=g.vertex_type,
@@ -195,6 +195,7 @@ def _make_neo4j_loader(config: BenchmarkConfig, loader_name: str) -> Neo4jNeighb
         batch_size=config.batch_size,
         shuffle=config.shuffle,
         features=config.features,
+        num_features=config.num_features,
         profile_every_n=n.profile_every_n,
         strategy=strategy,
     )
@@ -207,6 +208,7 @@ def _make_pyg_loader(config: BenchmarkConfig) -> PyGNeighborLoader:
         num_neighbors=config.num_neighbors,
         batch_size=config.batch_size,
         shuffle=config.shuffle,
+        num_features=config.num_features,
     )
 
 
@@ -297,7 +299,6 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
 
     sha = _git_sha()
     cfg_dump = dataclasses.asdict(config)
-    cfg_dump["gar_root"] = config.gar_root
     run_info = {
         "timestamp": timestamp,
         "git_sha": sha,
