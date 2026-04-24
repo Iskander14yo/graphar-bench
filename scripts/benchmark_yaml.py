@@ -11,10 +11,8 @@ DEFAULT_PATH = _EXPS / "config" / "benchmark.yaml"
 
 @dataclass(frozen=True)
 class GarSection:
-    graph_path: str
     vertex_type: str
     edge_type: str
-    num_features: int
     tmp_root: str
     vertex_chunk_size: int
     edge_chunk_size: int
@@ -41,16 +39,18 @@ class BenchmarkConfig:
     batch_size: int
     num_neighbors: list[int]
     features: list[str]
+    num_features: int
     num_runs: int
     shuffle: bool
     seed: int
     ogb_root: str
+    gar_root: str
     gar: GarSection
     neo4j: Neo4jSection
 
     @property
-    def gar_root(self) -> str:
-        return str(Path(self.gar.graph_path).parent.parent)
+    def gar_graph_path(self) -> str:
+        return str(Path(self.gar_root) / self.dataset / f"{self.dataset}.graph.yml")
 
 
 def load_config(path: Path | str | None = None) -> BenchmarkConfig:
@@ -62,10 +62,12 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
         batch_size=raw["batch_size"],
         num_neighbors=list(raw["num_neighbors"]),
         features=list(raw["features"]),
+        num_features=raw["num_features"],
         num_runs=raw["num_runs"],
         shuffle=raw["shuffle"],
         seed=raw["seed"],
         ogb_root=raw["ogb_root"],
+        gar_root=raw["gar_root"],
         gar=GarSection(**raw["gar"]),
         neo4j=Neo4jSection(**raw["neo4j"]),
     )

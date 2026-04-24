@@ -83,7 +83,9 @@ def _per_node_query(
 # Result conversion
 # ---------------------------------------------------------------------------
 
-def _feat_values(row: dict, hop: int, features: list[str]) -> list[float]:
+def _feat_values(
+    row: dict, hop: int, features: list[str], num_features: int | None = None
+) -> list[float]:
     parts: list[float] = []
     for f in features:
         val = row[f"{f}_{hop}"]
@@ -91,6 +93,8 @@ def _feat_values(row: dict, hop: int, features: list[str]) -> list[float]:
             parts.extend(float(v) for v in val)
         else:
             parts.append(float(val))
+    if num_features is not None:
+        return parts[:num_features]
     return parts
 
 
@@ -99,6 +103,7 @@ def _rows_to_data(
     num_hops: int,
     features: list[str],
     seed_nodes: list[int],
+    num_features: int | None = None,
 ) -> Data:
     node_feats: dict[int, list[float]] = {}
     edge_set: set[tuple[int, int]] = set()
@@ -110,7 +115,7 @@ def _rows_to_data(
                 break  # OPTIONAL MATCH — this hop and all later ones are null
             nid = int(raw_id)
             if nid not in node_feats:
-                node_feats[nid] = _feat_values(row, hop, features)
+                node_feats[nid] = _feat_values(row, hop, features, num_features)
         for hop in range(num_hops):
             if row[f"id_{hop}"] is None or row[f"id_{hop + 1}"] is None:
                 break
@@ -210,6 +215,7 @@ class Neo4jNeighborLoader:
         batch_size: int = 128,
         shuffle: bool = True,
         features: list[str] | None = None,
+        num_features: int | None = None,
         profile_every_n: int | None = 50,
         strategy: Literal["global", "per_node"] = "global",
     ) -> None:
@@ -223,6 +229,7 @@ class Neo4jNeighborLoader:
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._features = features or []
+        self._num_features = num_features
         self._profile_every_n = profile_every_n
         self._strategy = strategy
 
@@ -284,7 +291,13 @@ class Neo4jNeighborLoader:
 
         with _Timer("conversion", self.timings):
             rows = [dict(r) for r in raw_rows]
-            data = _rows_to_data(rows, num_hops, self._features, seed_nodes)
+            data = _rows_to_data(
+                rows,
+                num_hops,
+                self._features,
+                seed_nodes,
+                self._num_features,
+            )
 
         return data, profile_data
 
