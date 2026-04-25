@@ -84,10 +84,17 @@ def load_results(path: Path) -> dict[str, dict[str, dict]]:
             for run in data.get("runs", []):
                 rt = run.get("type", "warm")
                 bucket = agg[loader].setdefault(
-                    rt, {"batches": [], "system_metrics": [], "epoch_times_ms": []}
+                    rt, {
+                        "batches": [],
+                        "system_metrics": [],
+                        "epoch_times_ms": [],
+                        "chunk_manager": [],
+                    }
                 )
                 bucket["batches"].extend(run.get("batches", []))
                 bucket["system_metrics"].extend(run.get("system_metrics", []))
+                if "chunk_manager" in run:
+                    bucket["chunk_manager"].append(run["chunk_manager"])
                 if "epoch_time_ms" in run:
                     bucket["epoch_times_ms"].append(run["epoch_time_ms"])
     return agg
@@ -224,6 +231,45 @@ def _data_neo4j_profile(agg: dict) -> tuple[list[str], list[list[str]]]:
     return headers, rows
 
 
+def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
+    headers = [
+        "Loader", "run",
+        "Requests", "Leaders", "Waiters", "Completed", "Failed",
+        "Dedup ratio", "Waiter rate", "Failure rate",
+    ]
+    rows = []
+    for loader in _ordered_loaders(agg):
+        for rt in RUN_TYPES:
+            if rt not in agg[loader]:
+                continue
+            entries = agg[loader][rt].get("chunk_manager", [])
+            if not entries:
+                continue
+            totals = {
+                key: sum(int(entry.get(key, 0)) for entry in entries)
+                for key in ("requests", "leaders", "waiters", "completed", "failed")
+            }
+            requests = totals["requests"]
+            leaders = totals["leaders"]
+            waiters = totals["waiters"]
+            failed = totals["failed"]
+            dedup_ratio = requests / leaders if leaders else float("nan")
+            waiter_rate = waiters / requests if requests else float("nan")
+            failure_rate = failed / requests if requests else float("nan")
+            rows.append([
+                loader, rt,
+                str(totals["requests"]),
+                str(totals["leaders"]),
+                str(totals["waiters"]),
+                str(totals["completed"]),
+                str(totals["failed"]),
+                _fmt(dedup_ratio, ".2f"),
+                _fmt(waiter_rate, ".2%"),
+                _fmt(failure_rate, ".2%"),
+            ])
+    return headers, rows
+
+
 # ---------------------------------------------------------------------------
 # Save table images
 # ---------------------------------------------------------------------------
@@ -232,6 +278,7 @@ _TABLES = [
     ("Table 1: Main comparison",                 _data_table1),
     ("Table 2: Stage breakdown (GAR and Neo4j)", _data_table2),
     ("Table 3: Resource usage",                  _data_table3),
+    ("Chunk manager summary",                    _data_chunk_manager),
     ("Neo4j PROFILE summary",                    _data_neo4j_profile),
 ]
 
