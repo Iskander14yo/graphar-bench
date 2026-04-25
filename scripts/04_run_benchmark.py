@@ -195,6 +195,7 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         batch_size=config.batch_size,
         shuffle=config.shuffle,
         features=features,
+        ram_for_loader_mb=g.ram_for_loader_mb,
     )
 
 

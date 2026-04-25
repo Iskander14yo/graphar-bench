@@ -236,6 +236,7 @@ def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
         "Loader", "run",
         "Requests", "Leaders", "Waiters", "Completed", "Failed",
         "Dedup ratio", "Waiter rate", "Failure rate",
+        "RAM hits", "RAM misses", "RAM hit rate", "RAM evict", "RAM MB",
     ]
     rows = []
     for loader in _ordered_loaders(agg):
@@ -247,15 +248,29 @@ def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
                 continue
             totals = {
                 key: sum(int(entry.get(key, 0)) for entry in entries)
-                for key in ("requests", "leaders", "waiters", "completed", "failed")
+                for key in (
+                    "requests",
+                    "leaders",
+                    "waiters",
+                    "completed",
+                    "failed",
+                    "ram_cache_hits",
+                    "ram_cache_misses",
+                    "ram_cache_evictions",
+                )
             }
+            ram_cache_bytes = max(int(entry.get("ram_cache_bytes", 0)) for entry in entries)
             requests = totals["requests"]
             leaders = totals["leaders"]
             waiters = totals["waiters"]
             failed = totals["failed"]
+            ram_hits = totals["ram_cache_hits"]
+            ram_misses = totals["ram_cache_misses"]
             dedup_ratio = requests / leaders if leaders else float("nan")
             waiter_rate = waiters / requests if requests else float("nan")
             failure_rate = failed / requests if requests else float("nan")
+            ram_total = ram_hits + ram_misses
+            ram_hit_rate = ram_hits / ram_total if ram_total else float("nan")
             rows.append([
                 loader, rt,
                 str(totals["requests"]),
@@ -266,6 +281,11 @@ def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
                 _fmt(dedup_ratio, ".2f"),
                 _fmt(waiter_rate, ".2%"),
                 _fmt(failure_rate, ".2%"),
+                str(ram_hits),
+                str(ram_misses),
+                _fmt(ram_hit_rate, ".2%"),
+                str(totals["ram_cache_evictions"]),
+                _fmt(ram_cache_bytes / 1e6),
             ])
     return headers, rows
 

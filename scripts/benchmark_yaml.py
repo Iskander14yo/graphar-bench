@@ -18,6 +18,7 @@ class GarSection:
     edge_chunk_size: int
     vertex_write_batch_size: int
     edge_write_batch_size: int
+    ram_for_loader_mb: int = 0
 
 
 @dataclass(frozen=True)
