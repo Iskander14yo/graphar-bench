@@ -42,3 +42,7 @@ def restart(uri: str, database: str) -> None:
     subprocess.run(["sudo", "neo4j", "stop"], check=False)
     subprocess.run(["sudo", "neo4j", "start"], check=True)
     wait_for_bolt(uri, database)
+
+
+def stop() -> None:
+    subprocess.run(["sudo", "neo4j", "stop"], check=False)

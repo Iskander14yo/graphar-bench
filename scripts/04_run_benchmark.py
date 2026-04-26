@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -249,48 +250,59 @@ def _run_epoch(
 
 def _run_loader(
     loader_name: str,
-    loader,
+    make_loader: Callable[[], object],
     iter_fn,
     config: BenchmarkConfig,
     result_dir: Path,
 ) -> None:
     monitor = _SystemMonitor()
     runs = []
+    loader = None
 
-    for run_id in range(config.num_runs):
-        run_type = "cold" if run_id == 0 else "warm"
-        print(f"  [{loader_name}] run {run_id} ({run_type})...", flush=True)
+    try:
+        for run_id in range(config.num_runs):
+            run_type = "cold" if run_id == 0 else "warm"
+            print(f"  [{loader_name}] run {run_id} ({run_type})...", flush=True)
 
-        if run_type == "cold":
-            try:
-                _clear_caches(loader_name, config)
-            except Exception as e:
-                print(f"  WARNING: cache clear failed: {e}", flush=True)
+            if run_type == "cold":
+                try:
+                    _clear_caches(loader_name, config)
+                except Exception as e:
+                    print(f"  WARNING: cache clear failed: {e}", flush=True)
 
-        chunk_stats_before = _chunk_manager_stats(loader)
-        batch_timings, system_samples, epoch_time_ms = _run_epoch(
-            loader,
-            iter_fn,
-            monitor,
-            desc=f"{loader_name}/{run_type}",
-            batch_limit=config.batch_limit,
-        )
-        chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
-        mean_ms = (
-            sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
-            if batch_timings else 0.0
-        )
-        print(f"    {len(batch_timings)} batches, mean={mean_ms:.1f} ms, epoch={epoch_time_ms/1000:.1f} s", flush=True)
+            if loader is None:
+                loader = make_loader()
 
-        runs.append({
-            "run_id": run_id,
-            "type": run_type,
-            "epoch_time_ms": epoch_time_ms,
-            "batches": [dataclasses.asdict(bt) for bt in batch_timings],
-            "system_metrics": [dataclasses.asdict(ss) for ss in system_samples],
-        })
-        if chunk_stats is not None:
-            runs[-1]["chunk_manager"] = chunk_stats
+            chunk_stats_before = _chunk_manager_stats(loader)
+            batch_timings, system_samples, epoch_time_ms = _run_epoch(
+                loader,
+                iter_fn,
+                monitor,
+                desc=f"{loader_name}/{run_type}",
+                batch_limit=config.batch_limit,
+            )
+            chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
+            mean_ms = (
+                sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
+                if batch_timings else 0.0
+            )
+            print(f"    {len(batch_timings)} batches, mean={mean_ms:.1f} ms, epoch={epoch_time_ms/1000:.1f} s", flush=True)
+
+            runs.append({
+                "run_id": run_id,
+                "type": run_type,
+                "epoch_time_ms": epoch_time_ms,
+                "batches": [dataclasses.asdict(bt) for bt in batch_timings],
+                "system_metrics": [dataclasses.asdict(ss) for ss in system_samples],
+            })
+            if chunk_stats is not None:
+                runs[-1]["chunk_manager"] = chunk_stats
+    finally:
+        close = getattr(loader, "close", None)
+        if callable(close):
+            close()
+        if loader_name.startswith("neo4j"):
+            neo4j_service.stop()
 
     out = result_dir / f"{loader_name}.json"
     out.write_text(json.dumps({"runs": runs}, indent=2))
@@ -332,18 +344,17 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
 
     for loader_name in loaders_to_run:
         print(f"\n=== {loader_name} ===", flush=True)
-        loader = None
         try:
             if loader_name == "gar":
-                loader = _make_gar_loader(config)
+                make_loader = lambda: _make_gar_loader(config)
                 iter_fn = _gar_iter
             elif loader_name in ("neo4j-global", "neo4j-per-node"):
                 n = config.neo4j
                 neo4j_service.ensure_running(n.uri, n.database)
-                loader = _make_neo4j_loader(config, loader_name)
+                make_loader = lambda name=loader_name: _make_neo4j_loader(config, name)
                 iter_fn = _neo4j_iter
             elif loader_name == "pyg-inmem":
-                loader = _make_pyg_loader(config)
+                make_loader = lambda: _make_pyg_loader(config)
                 iter_fn = _pyg_iter
             else:
                 print(f"  Unknown loader '{loader_name}', skipping.")
@@ -351,17 +362,13 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
 
             _run_loader(
                 loader_name,
-                loader,
+                make_loader,
                 iter_fn,
                 config,
                 result_dir,
             )
         except Exception as e:
             print(f"  ERROR: {e}", flush=True)
-        finally:
-            close = getattr(loader, "close", None)
-            if callable(close):
-                close()
 
     print(f"\nDone.")
 

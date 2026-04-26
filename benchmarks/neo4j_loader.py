@@ -164,20 +164,30 @@ def _rows_to_data(
 
 def _extract_profile(plan) -> dict:
     """Recursively aggregate stats from a ProfiledPlan tree."""
-    db_hits = getattr(plan, "db_hits", 0) or 0
-    cache_hits = getattr(plan, "page_cache_hits", 0) or 0
-    cache_misses = getattr(plan, "page_cache_misses", 0) or 0
-    op_time_us = getattr(plan, "time", 0) or 0
+    if isinstance(plan, dict):
+        db_hits = plan.get("dbHits", 0) or 0
+        cache_hits = plan.get("pageCacheHits", 0) or 0
+        cache_misses = plan.get("pageCacheMisses", 0) or 0
+        op_time_us = plan.get("time", 0) or 0
+        operator_type = plan.get("operatorType", "unknown")
+        children = plan.get("children") or []
+    else:
+        db_hits = getattr(plan, "db_hits", 0) or 0
+        cache_hits = getattr(plan, "page_cache_hits", 0) or 0
+        cache_misses = getattr(plan, "page_cache_misses", 0) or 0
+        op_time_us = getattr(plan, "time", 0) or 0
+        operator_type = plan.operator_type
+        children = plan.children or []
 
     operators = [{
-        "operator": plan.operator_type,
+        "operator": operator_type,
         "db_hits": db_hits,
         "page_cache_hits": cache_hits,
         "page_cache_misses": cache_misses,
         "time_us": op_time_us,
     }]
 
-    for child in (plan.children or []):
+    for child in children:
         child_data = _extract_profile(child)
         db_hits += child_data["total_db_hits"]
         cache_hits += child_data["total_page_cache_hits"]
