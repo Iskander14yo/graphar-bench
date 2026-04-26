@@ -8,13 +8,9 @@ from graphar.ml.torch import GARNeighborLoader
 
 from .timings import BatchTimings
 
-_BATCH_LIMIT = 50
-
 
 def iter_batches(loader: GARNeighborLoader) -> Iterator[tuple[Data, BatchTimings]]:
     for batch_id, (batch, prof) in enumerate(loader.profile()):
-        if batch_id >= _BATCH_LIMIT:
-            break
         yield batch, BatchTimings(
             batch_id=batch_id,
             total_ms=prof.total_ms,

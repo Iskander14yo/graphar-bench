@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import itertools
 import json
 import subprocess
 import sys
@@ -234,14 +235,18 @@ def _make_pyg_loader(config: BenchmarkConfig) -> PyGNeighborLoader:
 # ---------------------------------------------------------------------------
 
 def _run_epoch(
-    loader, iter_fn, monitor: _SystemMonitor, desc: str
+    loader, iter_fn, monitor: _SystemMonitor, desc: str, batch_limit: int | None
 ) -> tuple[list[BatchTimings], list[SystemSample], float]:
     """Returns (batch_timings, system_samples, epoch_time_ms)."""
     total = len(loader) # if hasattr(loader, "__len__") else None
+    batches = iter_fn(loader)
+    if batch_limit is not None:
+        total = min(total, batch_limit)
+        batches = itertools.islice(batches, batch_limit)
     monitor.start()
     batch_timings: list[BatchTimings] = []
     t0 = time.perf_counter()
-    with tqdm(iter_fn(loader), total=total, desc=desc, unit="batch", leave=False) as pbar:
+    with tqdm(batches, total=total, desc=desc, unit="batch", leave=False) as pbar:
         for _batch, bt in pbar:
             batch_timings.append(bt)
             pbar.set_postfix({"ms": f"{bt.total_ms:.0f}"})
@@ -259,6 +264,7 @@ def _run_loader(
     loader,
     iter_fn,
     num_runs: int,
+    batch_limit: int | None,
     result_dir: Path,
 ) -> None:
     monitor = _SystemMonitor()
@@ -275,7 +281,13 @@ def _run_loader(
                 print(f"  WARNING: cache clear failed: {e}", flush=True)
 
         chunk_stats_before = _chunk_manager_stats(loader)
-        batch_timings, system_samples, epoch_time_ms = _run_epoch(loader, iter_fn, monitor, desc=f"{loader_name}/{run_type}")
+        batch_timings, system_samples, epoch_time_ms = _run_epoch(
+            loader,
+            iter_fn,
+            monitor,
+            desc=f"{loader_name}/{run_type}",
+            batch_limit=batch_limit,
+        )
         chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
         mean_ms = (
             sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
@@ -349,7 +361,14 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
                 print(f"  Unknown loader '{loader_name}', skipping.")
                 continue
 
-            _run_loader(loader_name, loader, iter_fn, num_runs, result_dir)
+            _run_loader(
+                loader_name,
+                loader,
+                iter_fn,
+                num_runs,
+                config.batch_limit,
+                result_dir,
+            )
         except Exception as e:
             print(f"  ERROR: {e}", flush=True)
         finally:
