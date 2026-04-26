@@ -18,6 +18,8 @@ class GarSection:
     edge_chunk_size: int
     vertex_write_batch_size: int
     edge_write_batch_size: int
+    ram_for_loader_mb: int = 0
+    num_workers: int = 4
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ class BenchmarkConfig:
     gar_root: str
     gar: GarSection
     neo4j: Neo4jSection
+    batch_limit: int | None = None
 
     @property
     def gar_graph_path(self) -> str:
@@ -56,6 +59,9 @@ class BenchmarkConfig:
 def load_config(path: Path | str | None = None) -> BenchmarkConfig:
     p = Path(path) if path else DEFAULT_PATH
     raw = yaml.safe_load(p.read_text())
+    batch_limit = raw.get("batch_limit")
+    if batch_limit is not None and batch_limit < 0:
+        raise ValueError("batch_limit must be non-negative or null")
     return BenchmarkConfig(
         dataset=raw["dataset"],
         loaders=list(raw["loaders"]),
@@ -70,4 +76,5 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
         gar_root=raw["gar_root"],
         gar=GarSection(**raw["gar"]),
         neo4j=Neo4jSection(**raw["neo4j"]),
+        batch_limit=batch_limit,
     )

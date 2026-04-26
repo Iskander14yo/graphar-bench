@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import itertools
 import json
 import subprocess
 import sys
@@ -167,6 +168,18 @@ def _clear_caches(loader_name: str) -> None:
         _restart_neo4j()
 
 
+def _chunk_manager_stats(loader) -> dict[str, int] | None:
+    if not hasattr(loader, "chunk_manager_stats"):
+        return None
+    return loader.chunk_manager_stats()
+
+
+def _stats_delta(after: dict[str, int] | None, before: dict[str, int] | None) -> dict[str, int] | None:
+    if after is None or before is None:
+        return None
+    return {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in after}
+
+
 # ---------------------------------------------------------------------------
 # Loader factories
 # ---------------------------------------------------------------------------
@@ -183,6 +196,8 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         batch_size=config.batch_size,
         shuffle=config.shuffle,
         features=features,
+        ram_for_loader_mb=g.ram_for_loader_mb,
+        num_workers=g.num_workers,
     )
 
 
@@ -220,14 +235,18 @@ def _make_pyg_loader(config: BenchmarkConfig) -> PyGNeighborLoader:
 # ---------------------------------------------------------------------------
 
 def _run_epoch(
-    loader, iter_fn, monitor: _SystemMonitor, desc: str
+    loader, iter_fn, monitor: _SystemMonitor, desc: str, batch_limit: int | None
 ) -> tuple[list[BatchTimings], list[SystemSample], float]:
     """Returns (batch_timings, system_samples, epoch_time_ms)."""
     total = len(loader) # if hasattr(loader, "__len__") else None
+    batches = iter_fn(loader)
+    if batch_limit is not None:
+        total = min(total, batch_limit)
+        batches = itertools.islice(batches, batch_limit)
     monitor.start()
     batch_timings: list[BatchTimings] = []
     t0 = time.perf_counter()
-    with tqdm(iter_fn(loader), total=total, desc=desc, unit="batch", leave=False) as pbar:
+    with tqdm(batches, total=total, desc=desc, unit="batch", leave=False) as pbar:
         for _batch, bt in pbar:
             batch_timings.append(bt)
             pbar.set_postfix({"ms": f"{bt.total_ms:.0f}"})
@@ -245,6 +264,7 @@ def _run_loader(
     loader,
     iter_fn,
     num_runs: int,
+    batch_limit: int | None,
     result_dir: Path,
 ) -> None:
     monitor = _SystemMonitor()
@@ -260,7 +280,15 @@ def _run_loader(
             except Exception as e:
                 print(f"  WARNING: cache clear failed: {e}", flush=True)
 
-        batch_timings, system_samples, epoch_time_ms = _run_epoch(loader, iter_fn, monitor, desc=f"{loader_name}/{run_type}")
+        chunk_stats_before = _chunk_manager_stats(loader)
+        batch_timings, system_samples, epoch_time_ms = _run_epoch(
+            loader,
+            iter_fn,
+            monitor,
+            desc=f"{loader_name}/{run_type}",
+            batch_limit=batch_limit,
+        )
+        chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
         mean_ms = (
             sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
             if batch_timings else 0.0
@@ -274,6 +302,8 @@ def _run_loader(
             "batches": [dataclasses.asdict(bt) for bt in batch_timings],
             "system_metrics": [dataclasses.asdict(ss) for ss in system_samples],
         })
+        if chunk_stats is not None:
+            runs[-1]["chunk_manager"] = chunk_stats
 
     out = result_dir / f"{loader_name}.json"
     out.write_text(json.dumps({"runs": runs}, indent=2))
@@ -331,12 +361,20 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
                 print(f"  Unknown loader '{loader_name}', skipping.")
                 continue
 
-            _run_loader(loader_name, loader, iter_fn, num_runs, result_dir)
+            _run_loader(
+                loader_name,
+                loader,
+                iter_fn,
+                num_runs,
+                config.batch_limit,
+                result_dir,
+            )
         except Exception as e:
             print(f"  ERROR: {e}", flush=True)
         finally:
-            if loader is not None and hasattr(loader, "close"):
-                loader.close()
+            close = getattr(loader, "close", None)
+            if callable(close):
+                close()
 
     print(f"\nDone.")
 
