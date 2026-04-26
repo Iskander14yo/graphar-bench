@@ -22,6 +22,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))  # graphar-bench/ → enables `from benchmarks.xxx`
 sys.path.insert(0, str(Path(__file__).parent))
 from benchmark_yaml import DEFAULT_PATH, BenchmarkConfig, load_config  # noqa: E402
+import neo4j_service  # noqa: E402
 
 import graphar as gar
 from benchmarks.gar_loader import iter_batches as _gar_iter
@@ -147,25 +148,12 @@ def _drop_os_cache() -> None:
     )
 
 
-def _restart_neo4j() -> None:
-    """Flush Neo4j page cache by restarting the service."""
-    subprocess.run(["sudo", "neo4j", "stop"], check=True)
-    subprocess.run(["sudo", "neo4j", "start"], check=True)
-    # wait until bolt is ready
-    for _ in range(60):
-        result = subprocess.run(
-            ["neo4j", "status"], capture_output=True, text=True, check=False
-        )
-        if "Neo4j is running" in result.stdout:
-            break
-        time.sleep(1)
-
-
-def _clear_caches(loader_name: str) -> None:
-    """Drop OS page cache; also restart Neo4j when running a Neo4j loader."""
+def _clear_caches(loader_name: str, config: BenchmarkConfig) -> None:
+    """Drop OS page cache; optionally restart a backing database."""
     _drop_os_cache()
     if loader_name.startswith("neo4j"):
-        _restart_neo4j()
+        n = config.neo4j
+        neo4j_service.restart(n.uri, n.database)
 
 
 def _chunk_manager_stats(loader) -> dict[str, int] | None:
@@ -263,20 +251,19 @@ def _run_loader(
     loader_name: str,
     loader,
     iter_fn,
-    num_runs: int,
-    batch_limit: int | None,
+    config: BenchmarkConfig,
     result_dir: Path,
 ) -> None:
     monitor = _SystemMonitor()
     runs = []
 
-    for run_id in range(num_runs):
+    for run_id in range(config.num_runs):
         run_type = "cold" if run_id == 0 else "warm"
         print(f"  [{loader_name}] run {run_id} ({run_type})...", flush=True)
 
         if run_type == "cold":
             try:
-                _clear_caches(loader_name)
+                _clear_caches(loader_name, config)
             except Exception as e:
                 print(f"  WARNING: cache clear failed: {e}", flush=True)
 
@@ -286,7 +273,7 @@ def _run_loader(
             iter_fn,
             monitor,
             desc=f"{loader_name}/{run_type}",
-            batch_limit=batch_limit,
+            batch_limit=config.batch_limit,
         )
         chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
         mean_ms = (
@@ -316,7 +303,6 @@ def _run_loader(
 
 def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> None:
     loaders_to_run = config.loaders
-    num_runs = config.num_runs
     dataset = config.dataset
     seed = config.seed
 
@@ -352,6 +338,8 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
                 loader = _make_gar_loader(config)
                 iter_fn = _gar_iter
             elif loader_name in ("neo4j-global", "neo4j-per-node"):
+                n = config.neo4j
+                neo4j_service.ensure_running(n.uri, n.database)
                 loader = _make_neo4j_loader(config, loader_name)
                 iter_fn = _neo4j_iter
             elif loader_name == "pyg-inmem":
@@ -365,8 +353,7 @@ def run_benchmark(config: BenchmarkConfig, result_dir: Path | None = None) -> No
                 loader_name,
                 loader,
                 iter_fn,
-                num_runs,
-                config.batch_limit,
+                config,
                 result_dir,
             )
         except Exception as e:
