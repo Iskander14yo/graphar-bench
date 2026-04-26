@@ -233,7 +233,7 @@ def _data_neo4j_profile(agg: dict) -> tuple[list[str], list[list[str]]]:
 
 def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
     headers = [
-        "Loader", "run",
+        "run",
         "Requests", "Leaders", "Waiters", "Completed", "Failed",
         "Dedup ratio", "Waiter rate", "Failure rate",
         "RAM hits", "RAM misses", "RAM hit rate", "RAM evict", "RAM MB",
@@ -272,7 +272,7 @@ def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
             ram_total = ram_hits + ram_misses
             ram_hit_rate = ram_hits / ram_total if ram_total else float("nan")
             rows.append([
-                loader, rt,
+                rt,
                 str(totals["requests"]),
                 str(totals["leaders"]),
                 str(totals["waiters"]),
