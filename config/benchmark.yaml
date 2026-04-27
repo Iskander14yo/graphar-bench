@@ -23,7 +23,8 @@ gar:
   edge_chunk_size: 10000000
   vertex_write_batch_size: 500000
   edge_write_batch_size: 5000000
-  ram_for_loader_mb: 4096
+  edge_ram_for_loader_mb: 4096
+  feature_ram_for_loader_mb: 0
   num_workers: 0
   feature_cursor_count: 1
   feature_cursor_trail_chunks: 10
