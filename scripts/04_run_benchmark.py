@@ -163,10 +163,47 @@ def _chunk_manager_stats(loader) -> dict[str, int] | None:
     return loader.chunk_manager_stats()
 
 
+def _feature_cursor_stats(loader) -> dict[str, int] | None:
+    if not hasattr(loader, "feature_cursor_stats"):
+        return None
+    return loader.feature_cursor_stats()
+
+
 def _stats_delta(after: dict[str, int] | None, before: dict[str, int] | None) -> dict[str, int] | None:
     if after is None or before is None:
         return None
     return {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in after}
+
+
+def _feature_cursor_stats_delta(
+    after: dict[str, int] | None,
+    before: dict[str, int] | None,
+) -> dict[str, int] | None:
+    if after is None or before is None:
+        return None
+    delta = {
+        key: int(after.get(key, 0)) - int(before.get(key, 0))
+        for key in (
+            "requests",
+            "requests_completed",
+            "requests_failed",
+            "chunks_read",
+            "chunks_served",
+            "rows_served",
+            "batches_served",
+            "trail_hits",
+            "trail_misses",
+            "trail_evictions",
+            "wait_ms_sum",
+            "service_ms_sum",
+        )
+    }
+    delta["cursor_count"] = int(after.get("cursor_count", 0))
+    delta["trail_capacity_chunks"] = int(after.get("trail_capacity_chunks", 0))
+    delta["active_requests_peak"] = int(after.get("active_requests_peak", 0))
+    delta["wait_ms_max"] = int(after.get("wait_ms_max", 0))
+    delta["service_ms_max"] = int(after.get("service_ms_max", 0))
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +224,8 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         features=features,
         ram_for_loader_mb=g.ram_for_loader_mb,
         num_workers=g.num_workers,
+        feature_cursor_count=g.feature_cursor_count,
+        feature_cursor_trail_chunks=g.feature_cursor_trail_chunks,
     )
 
 
@@ -274,6 +313,7 @@ def _run_loader(
                 loader = make_loader()
 
             chunk_stats_before = _chunk_manager_stats(loader)
+            feature_cursor_stats_before = _feature_cursor_stats(loader)
             batch_timings, system_samples, epoch_time_ms = _run_epoch(
                 loader,
                 iter_fn,
@@ -282,6 +322,10 @@ def _run_loader(
                 batch_limit=config.batch_limit,
             )
             chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
+            feature_cursor_stats = _feature_cursor_stats_delta(
+                _feature_cursor_stats(loader),
+                feature_cursor_stats_before,
+            )
             mean_ms = (
                 sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
                 if batch_timings else 0.0
@@ -297,6 +341,8 @@ def _run_loader(
             })
             if chunk_stats is not None:
                 runs[-1]["chunk_manager"] = chunk_stats
+            if feature_cursor_stats is not None:
+                runs[-1]["feature_cursor"] = feature_cursor_stats
     finally:
         close = getattr(loader, "close", None)
         if callable(close):

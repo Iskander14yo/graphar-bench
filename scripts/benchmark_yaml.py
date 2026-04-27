@@ -20,6 +20,8 @@ class GarSection:
     edge_write_batch_size: int
     ram_for_loader_mb: int = 0
     num_workers: int = 4
+    feature_cursor_count: int = 1
+    feature_cursor_trail_chunks: int = 10
 
 
 @dataclass(frozen=True)

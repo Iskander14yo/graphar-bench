@@ -89,12 +89,15 @@ def load_results(path: Path) -> dict[str, dict[str, dict]]:
                         "system_metrics": [],
                         "epoch_times_ms": [],
                         "chunk_manager": [],
+                        "feature_cursor": [],
                     }
                 )
                 bucket["batches"].extend(run.get("batches", []))
                 bucket["system_metrics"].extend(run.get("system_metrics", []))
                 if "chunk_manager" in run:
                     bucket["chunk_manager"].append(run["chunk_manager"])
+                if "feature_cursor" in run:
+                    bucket["feature_cursor"].append(run["feature_cursor"])
                 if "epoch_time_ms" in run:
                     bucket["epoch_times_ms"].append(run["epoch_time_ms"])
     return agg
@@ -290,6 +293,58 @@ def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
     return headers, rows
 
 
+def _data_feature_cursor(agg: dict) -> tuple[list[str], list[list[str]]]:
+    headers = [
+        "run",
+        "cursor_count",
+        "requests",
+        "chunks_read",
+        "chunks_served",
+        "rows_served",
+        "trail_hit_rate",
+        "wait_ms_max",
+        "service_ms_sum",
+    ]
+    rows = []
+    for loader in _ordered_loaders(agg):
+        if loader != "gar":
+            continue
+        for rt in RUN_TYPES:
+            if rt not in agg[loader]:
+                continue
+            entries = agg[loader][rt].get("feature_cursor", [])
+            if not entries:
+                continue
+            totals = {
+                key: sum(int(entry.get(key, 0)) for entry in entries)
+                for key in (
+                    "requests",
+                    "chunks_read",
+                    "chunks_served",
+                    "rows_served",
+                    "trail_hits",
+                    "trail_misses",
+                    "service_ms_sum",
+                )
+            }
+            cursor_count = max(int(entry.get("cursor_count", 0)) for entry in entries)
+            wait_ms_max = max(int(entry.get("wait_ms_max", 0)) for entry in entries)
+            trail_total = totals["trail_hits"] + totals["trail_misses"]
+            trail_hit_rate = totals["trail_hits"] / trail_total if trail_total else float("nan")
+            rows.append([
+                rt,
+                str(cursor_count),
+                str(totals["requests"]),
+                str(totals["chunks_read"]),
+                str(totals["chunks_served"]),
+                str(totals["rows_served"]),
+                _fmt(trail_hit_rate, ".2%"),
+                str(wait_ms_max),
+                str(totals["service_ms_sum"]),
+            ])
+    return headers, rows
+
+
 # ---------------------------------------------------------------------------
 # Save table images
 # ---------------------------------------------------------------------------
@@ -299,6 +354,7 @@ _TABLES = [
     ("Table 2: Stage breakdown (GAR and Neo4j)", _data_table2),
     ("Table 3: Resource usage",                  _data_table3),
     ("Chunk manager summary",                    _data_chunk_manager),
+    ("Feature cursor summary",                   _data_feature_cursor),
     ("Neo4j PROFILE summary",                    _data_neo4j_profile),
 ]
 
