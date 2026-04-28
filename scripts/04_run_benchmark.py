@@ -220,11 +220,16 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
     g = config.gar
     graph_info = gar.GraphInfo.load(str(Path(config.gar_graph_path).resolve()))
     features = [f"f{i:03d}" for i in range(config.num_features)]
+    input_nodes = None
+    if config.batch_limit is not None and not config.shuffle:
+        total_nodes = graph_info.get_vertex_count(g.vertex_type)
+        input_nodes = range(min(total_nodes, config.batch_limit * config.batch_size))
     return GARNeighborLoader(
         graph_info,
         vertex_type=g.vertex_type,
         edge_type=g.edge_type,
         num_neighbors=config.num_neighbors,
+        input_nodes=input_nodes,
         batch_size=config.batch_size,
         shuffle=config.shuffle,
         features=features,
