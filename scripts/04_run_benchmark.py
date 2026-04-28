@@ -169,6 +169,12 @@ def _feature_cursor_stats(loader) -> dict[str, int] | None:
     return loader.feature_cursor_stats()
 
 
+def _feature_chunk_manager_stats(loader) -> dict[str, int] | None:
+    if not hasattr(loader, "feature_chunk_manager_stats"):
+        return None
+    return loader.feature_chunk_manager_stats()
+
+
 def _stats_delta(after: dict[str, int] | None, before: dict[str, int] | None) -> dict[str, int] | None:
     if after is None or before is None:
         return None
@@ -315,6 +321,7 @@ def _run_loader(
                 loader = make_loader()
 
             chunk_stats_before = _chunk_manager_stats(loader)
+            feature_chunk_stats_before = _feature_chunk_manager_stats(loader)
             feature_cursor_stats_before = _feature_cursor_stats(loader)
             batch_timings, system_samples, epoch_time_ms = _run_epoch(
                 loader,
@@ -324,6 +331,10 @@ def _run_loader(
                 batch_limit=config.batch_limit,
             )
             chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
+            feature_chunk_stats = _stats_delta(
+                _feature_chunk_manager_stats(loader),
+                feature_chunk_stats_before,
+            )
             feature_cursor_stats = _feature_cursor_stats_delta(
                 _feature_cursor_stats(loader),
                 feature_cursor_stats_before,
@@ -343,6 +354,8 @@ def _run_loader(
             })
             if chunk_stats is not None:
                 runs[-1]["chunk_manager"] = chunk_stats
+            if feature_chunk_stats is not None:
+                runs[-1]["feature_chunk_manager"] = feature_chunk_stats
             if feature_cursor_stats is not None:
                 runs[-1]["feature_cursor"] = feature_cursor_stats
     finally:

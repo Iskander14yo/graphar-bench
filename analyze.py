@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+import gar_metrics
 import numpy as np
 
 LOADER_ORDER = ["gar", "neo4j-global", "neo4j-per-node", "pyg-inmem"]
@@ -88,16 +89,12 @@ def load_results(path: Path) -> dict[str, dict[str, dict]]:
                         "batches": [],
                         "system_metrics": [],
                         "epoch_times_ms": [],
-                        "chunk_manager": [],
-                        "feature_cursor": [],
                     }
                 )
+                gar_metrics.init_bucket(bucket)
                 bucket["batches"].extend(run.get("batches", []))
                 bucket["system_metrics"].extend(run.get("system_metrics", []))
-                if "chunk_manager" in run:
-                    bucket["chunk_manager"].append(run["chunk_manager"])
-                if "feature_cursor" in run:
-                    bucket["feature_cursor"].append(run["feature_cursor"])
+                gar_metrics.append_run(bucket, run)
                 if "epoch_time_ms" in run:
                     bucket["epoch_times_ms"].append(run["epoch_time_ms"])
     return agg
@@ -235,114 +232,26 @@ def _data_neo4j_profile(agg: dict) -> tuple[list[str], list[list[str]]]:
 
 
 def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
-    headers = [
-        "run",
-        "Requests", "Leaders", "Waiters", "Completed", "Failed",
-        "Dedup ratio", "Waiter rate", "Failure rate",
-        "RAM hits", "RAM misses", "RAM hit rate", "RAM evict", "RAM MB",
-    ]
-    rows = []
-    for loader in _ordered_loaders(agg):
-        for rt in RUN_TYPES:
-            if rt not in agg[loader]:
-                continue
-            entries = agg[loader][rt].get("chunk_manager", [])
-            if not entries:
-                continue
-            totals = {
-                key: sum(int(entry.get(key, 0)) for entry in entries)
-                for key in (
-                    "requests",
-                    "leaders",
-                    "waiters",
-                    "completed",
-                    "failed",
-                    "ram_cache_hits",
-                    "ram_cache_misses",
-                    "ram_cache_evictions",
-                )
-            }
-            ram_cache_bytes = max(int(entry.get("ram_cache_bytes", 0)) for entry in entries)
-            requests = totals["requests"]
-            leaders = totals["leaders"]
-            waiters = totals["waiters"]
-            failed = totals["failed"]
-            ram_hits = totals["ram_cache_hits"]
-            ram_misses = totals["ram_cache_misses"]
-            dedup_ratio = requests / leaders if leaders else float("nan")
-            waiter_rate = waiters / requests if requests else float("nan")
-            failure_rate = failed / requests if requests else float("nan")
-            ram_total = ram_hits + ram_misses
-            ram_hit_rate = ram_hits / ram_total if ram_total else float("nan")
-            rows.append([
-                rt,
-                str(totals["requests"]),
-                str(totals["leaders"]),
-                str(totals["waiters"]),
-                str(totals["completed"]),
-                str(totals["failed"]),
-                _fmt(dedup_ratio, ".2f"),
-                _fmt(waiter_rate, ".2%"),
-                _fmt(failure_rate, ".2%"),
-                str(ram_hits),
-                str(ram_misses),
-                _fmt(ram_hit_rate, ".2%"),
-                str(totals["ram_cache_evictions"]),
-                _fmt(ram_cache_bytes / 1e6),
-            ])
-    return headers, rows
+    return gar_metrics.data_chunk_manager(agg, _ordered_loaders(agg), RUN_TYPES, _fmt)
+
+
+def _data_feature_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
+    return gar_metrics.data_feature_chunk_manager(
+        agg,
+        _ordered_loaders(agg),
+        RUN_TYPES,
+        _fmt,
+    )
 
 
 def _data_feature_cursor(agg: dict) -> tuple[list[str], list[list[str]]]:
-    headers = [
-        "run",
-        "cursor_count",
-        "requests",
-        "chunks_read",
-        "chunks_served",
-        "rows_served",
-        "trail_hit_rate",
-        "wait_ms_max",
-        "service_ms_sum",
-    ]
-    rows = []
-    for loader in _ordered_loaders(agg):
-        if loader != "gar":
-            continue
-        for rt in RUN_TYPES:
-            if rt not in agg[loader]:
-                continue
-            entries = agg[loader][rt].get("feature_cursor", [])
-            if not entries:
-                continue
-            totals = {
-                key: sum(int(entry.get(key, 0)) for entry in entries)
-                for key in (
-                    "requests",
-                    "chunks_read",
-                    "chunks_served",
-                    "rows_served",
-                    "trail_hits",
-                    "trail_misses",
-                    "service_ms_sum",
-                )
-            }
-            cursor_count = max(int(entry.get("cursor_count", 0)) for entry in entries)
-            wait_ms_max = max(int(entry.get("wait_ms_max", 0)) for entry in entries)
-            trail_total = totals["trail_hits"] + totals["trail_misses"]
-            trail_hit_rate = totals["trail_hits"] / trail_total if trail_total else float("nan")
-            rows.append([
-                rt,
-                str(cursor_count),
-                str(totals["requests"]),
-                str(totals["chunks_read"]),
-                str(totals["chunks_served"]),
-                str(totals["rows_served"]),
-                _fmt(trail_hit_rate, ".2%"),
-                str(wait_ms_max),
-                str(totals["service_ms_sum"]),
-            ])
-    return headers, rows
+    return gar_metrics.data_feature_cursor(
+        agg,
+        _ordered_loaders(agg),
+        RUN_TYPES,
+        _fmt,
+        _non_profiled,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +263,7 @@ _TABLES = [
     ("Table 2: Stage breakdown (GAR and Neo4j)", _data_table2),
     ("Table 3: Resource usage",                  _data_table3),
     ("Chunk manager summary",                    _data_chunk_manager),
+    ("Feature chunk manager summary",            _data_feature_chunk_manager),
     ("Feature cursor summary",                   _data_feature_cursor),
     ("Neo4j PROFILE summary",                    _data_neo4j_profile),
 ]
