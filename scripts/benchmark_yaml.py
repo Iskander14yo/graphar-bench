@@ -21,6 +21,7 @@ class GarSection:
     edge_ram_for_loader_mb: int = 0
     feature_ram_for_loader_mb: int = 0
     num_workers: int = 4
+    prefetch_batches: int = 0
     feature_cursor_count: int = 1
     feature_cursor_trail_chunks: int = 10
 
