@@ -265,7 +265,7 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         features=features,
         edge_ram_for_loader_mb=g.edge_ram_for_loader_mb,
         feature_ram_for_loader_mb=g.feature_ram_for_loader_mb,
-        num_workers=g.num_workers,
+        num_samplers=g.num_samplers,
         prefetch_batches=g.prefetch_batches,
         num_readers=g.num_readers,
         num_stitchers=g.num_stitchers,

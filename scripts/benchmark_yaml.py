@@ -20,7 +20,7 @@ class GarSection:
     edge_write_batch_size: int
     edge_ram_for_loader_mb: int = 0
     feature_ram_for_loader_mb: int = 0
-    num_workers: int = 4
+    num_samplers: int = 4
     prefetch_batches: int = 0
     num_readers: int = 1
     num_stitchers: int = 1
