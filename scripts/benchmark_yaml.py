@@ -18,8 +18,12 @@ class GarSection:
     edge_chunk_size: int
     vertex_write_batch_size: int
     edge_write_batch_size: int
-    ram_for_loader_mb: int = 0
+    edge_ram_for_loader_mb: int = 0
+    feature_ram_for_loader_mb: int = 0
     num_workers: int = 4
+    prefetch_batches: int = 0
+    feature_cursor_count: int = 1
+    feature_cursor_trail_chunks: int = 10
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,11 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
     batch_limit = raw.get("batch_limit")
     if batch_limit is not None and batch_limit < 0:
         raise ValueError("batch_limit must be non-negative or null")
+    gar_raw = dict(raw["gar"])
+    shared_budget_mb = gar_raw.pop("ram_for_loader_mb", None)
+    if shared_budget_mb is not None:
+        gar_raw.setdefault("edge_ram_for_loader_mb", shared_budget_mb)
+        gar_raw.setdefault("feature_ram_for_loader_mb", shared_budget_mb)
     return BenchmarkConfig(
         dataset=raw["dataset"],
         loaders=list(raw["loaders"]),
@@ -74,7 +83,7 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
         seed=raw["seed"],
         ogb_root=raw["ogb_root"],
         gar_root=raw["gar_root"],
-        gar=GarSection(**raw["gar"]),
+        gar=GarSection(**gar_raw),
         neo4j=Neo4jSection(**raw["neo4j"]),
         batch_limit=batch_limit,
     )
