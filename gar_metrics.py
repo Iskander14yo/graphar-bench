@@ -5,6 +5,7 @@ from collections.abc import Callable
 STAT_BUCKET_KEYS = (
     "chunk_manager",
     "feature_chunk_manager",
+    "feature_pipeline",
     "feature_cursor",
 )
 
@@ -221,5 +222,84 @@ def data_feature_cursor(
                 fmt(avg_service_ms, ".1f"),
                 str(totals["service_ms_sum"]),
                 str(request_overhang),
+            ])
+    return headers, rows
+
+
+def data_feature_pipeline(
+    agg: dict,
+    ordered_loaders: list[str],
+    run_types: list[str],
+    fmt: Callable[[float, str], str],
+) -> tuple[list[str], list[list[str]]]:
+    headers = [
+        "run",
+        "submitted",
+        "completed",
+        "pending_peak",
+        "chunk_peak",
+        "subscriptions",
+        "chunk_reads",
+        "chunk_reuses",
+        "reuse_ratio",
+        "stitch_tasks",
+        "avg_stitch_wait_ms",
+        "avg_stitch_service_ms",
+    ]
+    rows = []
+    for loader in ordered_loaders:
+        if loader != "gar":
+            continue
+        for run_type in run_types:
+            if run_type not in agg[loader]:
+                continue
+            entries = agg[loader][run_type].get("feature_pipeline", [])
+            if not entries:
+                continue
+            totals = _sum_entries(
+                entries,
+                (
+                    "submitted_batches",
+                    "completed_batches",
+                    "chunk_subscriptions",
+                    "chunk_reads",
+                    "chunk_reuses",
+                    "stitch_tasks",
+                    "stitch_wait_ms_sum",
+                    "stitch_service_ms_sum",
+                ),
+            )
+            pending_peak = max(int(entry.get("pending_batches_peak", 0)) for entry in entries)
+            chunk_peak = max(int(entry.get("active_chunk_keys_peak", 0)) for entry in entries)
+            stitch_tasks = totals["stitch_tasks"]
+            chunk_reads = totals["chunk_reads"]
+            reuse_ratio = (
+                totals["chunk_subscriptions"] / chunk_reads
+                if chunk_reads
+                else float("nan")
+            )
+            avg_stitch_wait_ms = (
+                totals["stitch_wait_ms_sum"] / stitch_tasks
+                if stitch_tasks
+                else float("nan")
+            )
+            avg_stitch_service_ms = (
+                totals["stitch_service_ms_sum"] / stitch_tasks
+                if stitch_tasks
+                else float("nan")
+            )
+            rows.append([
+                run_type,
+                str(totals["submitted_batches"]),
+                str(totals["completed_batches"]),
+                str(pending_peak),
+                str(chunk_peak),
+                str(totals["chunk_subscriptions"]),
+                str(chunk_reads),
+                str(totals["chunk_reuses"]),
+                fmt(reuse_ratio, ".2f"),
+                str(stitch_tasks),
+                fmt(avg_stitch_wait_ms, ".1f"),
+                fmt(avg_stitch_service_ms, ".1f"),
             ])
     return headers, rows

@@ -175,6 +175,12 @@ def _feature_chunk_manager_stats(loader) -> dict[str, int] | None:
     return loader.feature_chunk_manager_stats()
 
 
+def _feature_pipeline_stats(loader) -> dict[str, int] | None:
+    if not hasattr(loader, "feature_pipeline_stats"):
+        return None
+    return loader.feature_pipeline_stats()
+
+
 def _stats_delta(after: dict[str, int] | None, before: dict[str, int] | None) -> dict[str, int] | None:
     if after is None or before is None:
         return None
@@ -212,6 +218,30 @@ def _feature_cursor_stats_delta(
     return delta
 
 
+def _feature_pipeline_stats_delta(
+    after: dict[str, int] | None,
+    before: dict[str, int] | None,
+) -> dict[str, int] | None:
+    if after is None or before is None:
+        return None
+    delta = {
+        key: int(after.get(key, 0)) - int(before.get(key, 0))
+        for key in (
+            "submitted_batches",
+            "completed_batches",
+            "chunk_subscriptions",
+            "chunk_reads",
+            "chunk_reuses",
+            "stitch_tasks",
+            "stitch_wait_ms_sum",
+            "stitch_service_ms_sum",
+        )
+    }
+    delta["pending_batches_peak"] = int(after.get("pending_batches_peak", 0))
+    delta["active_chunk_keys_peak"] = int(after.get("active_chunk_keys_peak", 0))
+    return delta
+
+
 # ---------------------------------------------------------------------------
 # Loader factories
 # ---------------------------------------------------------------------------
@@ -237,7 +267,8 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         feature_ram_for_loader_mb=g.feature_ram_for_loader_mb,
         num_workers=g.num_workers,
         prefetch_batches=g.prefetch_batches,
-        feature_cursor_count=g.feature_cursor_count,
+        num_readers=g.num_readers,
+        num_stitchers=g.num_stitchers,
         feature_cursor_trail_chunks=g.feature_cursor_trail_chunks,
     )
 
@@ -327,6 +358,7 @@ def _run_loader(
 
             chunk_stats_before = _chunk_manager_stats(loader)
             feature_chunk_stats_before = _feature_chunk_manager_stats(loader)
+            feature_pipeline_stats_before = _feature_pipeline_stats(loader)
             feature_cursor_stats_before = _feature_cursor_stats(loader)
             batch_timings, system_samples, epoch_time_ms = _run_epoch(
                 loader,
@@ -339,6 +371,10 @@ def _run_loader(
             feature_chunk_stats = _stats_delta(
                 _feature_chunk_manager_stats(loader),
                 feature_chunk_stats_before,
+            )
+            feature_pipeline_stats = _feature_pipeline_stats_delta(
+                _feature_pipeline_stats(loader),
+                feature_pipeline_stats_before,
             )
             feature_cursor_stats = _feature_cursor_stats_delta(
                 _feature_cursor_stats(loader),
@@ -361,6 +397,8 @@ def _run_loader(
                 runs[-1]["chunk_manager"] = chunk_stats
             if feature_chunk_stats is not None:
                 runs[-1]["feature_chunk_manager"] = feature_chunk_stats
+            if feature_pipeline_stats is not None:
+                runs[-1]["feature_pipeline"] = feature_pipeline_stats
             if feature_cursor_stats is not None:
                 runs[-1]["feature_cursor"] = feature_cursor_stats
     finally:
