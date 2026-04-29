@@ -26,7 +26,8 @@ gar:
   edge_ram_for_loader_mb: 4096
   feature_ram_for_loader_mb: 0
   num_workers: 0
-  prefetch_batches: 0      # 0 = auto (= num_workers)
+  prefetch_windows: 0      # 0 = auto (= num_workers)
+  feature_buffer_batches: 1
   feature_cursor_count: 1
   feature_cursor_trail_chunks: 10
 

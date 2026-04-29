@@ -175,6 +175,12 @@ def _feature_chunk_manager_stats(loader) -> dict[str, int] | None:
     return loader.feature_chunk_manager_stats()
 
 
+def _feature_window_stats(loader) -> dict[str, float | int] | None:
+    if not hasattr(loader, "feature_window_stats"):
+        return None
+    return loader.feature_window_stats()
+
+
 def _stats_delta(after: dict[str, int] | None, before: dict[str, int] | None) -> dict[str, int] | None:
     if after is None or before is None:
         return None
@@ -236,7 +242,8 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         edge_ram_for_loader_mb=g.edge_ram_for_loader_mb,
         feature_ram_for_loader_mb=g.feature_ram_for_loader_mb,
         num_workers=g.num_workers,
-        prefetch_batches=g.prefetch_batches,
+        prefetch_windows=g.prefetch_windows,
+        feature_buffer_batches=g.feature_buffer_batches,
         feature_cursor_count=g.feature_cursor_count,
         feature_cursor_trail_chunks=g.feature_cursor_trail_chunks,
     )
@@ -344,6 +351,7 @@ def _run_loader(
                 _feature_cursor_stats(loader),
                 feature_cursor_stats_before,
             )
+            feature_window_stats = _feature_window_stats(loader)
             mean_ms = (
                 sum(bt.total_ms for bt in batch_timings) / len(batch_timings)
                 if batch_timings else 0.0
@@ -363,6 +371,8 @@ def _run_loader(
                 runs[-1]["feature_chunk_manager"] = feature_chunk_stats
             if feature_cursor_stats is not None:
                 runs[-1]["feature_cursor"] = feature_cursor_stats
+            if feature_window_stats is not None:
+                runs[-1]["feature_windows"] = feature_window_stats
     finally:
         close = getattr(loader, "close", None)
         if callable(close):

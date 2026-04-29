@@ -254,6 +254,15 @@ def _data_feature_cursor(agg: dict) -> tuple[list[str], list[list[str]]]:
     )
 
 
+def _data_feature_windows(agg: dict) -> tuple[list[str], list[list[str]]]:
+    return gar_metrics.data_feature_windows(
+        agg,
+        _ordered_loaders(agg),
+        RUN_TYPES,
+        _fmt,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Save table images
 # ---------------------------------------------------------------------------
@@ -265,6 +274,7 @@ _TABLES = [
     ("Chunk manager summary",                    _data_chunk_manager),
     ("Feature chunk manager summary",            _data_feature_chunk_manager),
     ("Feature cursor summary",                   _data_feature_cursor),
+    ("Feature window summary",                   _data_feature_windows),
     ("Neo4j PROFILE summary",                    _data_neo4j_profile),
 ]
 

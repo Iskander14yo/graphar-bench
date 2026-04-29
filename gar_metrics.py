@@ -6,6 +6,7 @@ STAT_BUCKET_KEYS = (
     "chunk_manager",
     "feature_chunk_manager",
     "feature_cursor",
+    "feature_windows",
 )
 
 
@@ -23,6 +24,13 @@ def append_run(bucket: dict, run: dict) -> None:
 def _sum_entries(entries: list[dict], keys: tuple[str, ...]) -> dict[str, int]:
     return {
         key: sum(int(entry.get(key, 0)) for entry in entries)
+        for key in keys
+    }
+
+
+def _sum_float_entries(entries: list[dict], keys: tuple[str, ...]) -> dict[str, float]:
+    return {
+        key: sum(float(entry.get(key, 0.0)) for entry in entries)
         for key in keys
     }
 
@@ -221,5 +229,68 @@ def data_feature_cursor(
                 fmt(avg_service_ms, ".1f"),
                 str(totals["service_ms_sum"]),
                 str(request_overhang),
+            ])
+    return headers, rows
+
+
+def data_feature_windows(
+    agg: dict,
+    ordered_loaders: list[str],
+    run_types: list[str],
+    fmt: Callable[[float, str], str],
+) -> tuple[list[str], list[list[str]]]:
+    headers = [
+        "run",
+        "windows",
+        "batches/window",
+        "max batches",
+        "fetch/window ms",
+        "conv/window ms",
+        "nodes/window",
+        "unique/window",
+        "reuse ratio",
+    ]
+    rows = []
+    for loader in ordered_loaders:
+        if loader != "gar":
+            continue
+        for run_type in run_types:
+            if run_type not in agg[loader]:
+                continue
+            entries = agg[loader][run_type].get("feature_windows", [])
+            if not entries:
+                continue
+            totals = _sum_entries(
+                entries,
+                ("windows", "window_batches_sum", "window_nodes_sum", "window_unique_nodes_sum"),
+            )
+            float_totals = _sum_float_entries(
+                entries,
+                ("window_fetch_ms_sum", "window_conversion_ms_sum"),
+            )
+            windows = totals["windows"]
+            window_unique_nodes_sum = totals["window_unique_nodes_sum"]
+            rows.append([
+                run_type,
+                str(windows),
+                fmt(totals["window_batches_sum"] / windows if windows else float("nan"), ".2f"),
+                str(max(int(entry.get("window_batches_max", 0)) for entry in entries)),
+                fmt(float_totals["window_fetch_ms_sum"] / windows if windows else float("nan")),
+                fmt(
+                    float_totals["window_conversion_ms_sum"] / windows
+                    if windows
+                    else float("nan")
+                ),
+                fmt(totals["window_nodes_sum"] / windows if windows else float("nan"), ".0f"),
+                fmt(
+                    window_unique_nodes_sum / windows if windows else float("nan"),
+                    ".0f",
+                ),
+                fmt(
+                    totals["window_nodes_sum"] / window_unique_nodes_sum
+                    if window_unique_nodes_sum
+                    else float("nan"),
+                    ".2f",
+                ),
             ])
     return headers, rows

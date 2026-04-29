@@ -21,7 +21,8 @@ class GarSection:
     edge_ram_for_loader_mb: int = 0
     feature_ram_for_loader_mb: int = 0
     num_workers: int = 4
-    prefetch_batches: int = 0
+    prefetch_windows: int = 0
+    feature_buffer_batches: int = 1
     feature_cursor_count: int = 1
     feature_cursor_trail_chunks: int = 10
 
@@ -71,6 +72,8 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
     if shared_budget_mb is not None:
         gar_raw.setdefault("edge_ram_for_loader_mb", shared_budget_mb)
         gar_raw.setdefault("feature_ram_for_loader_mb", shared_budget_mb)
+    if "prefetch_windows" not in gar_raw and "prefetch_batches" in gar_raw:
+        gar_raw["prefetch_windows"] = gar_raw.pop("prefetch_batches")
     return BenchmarkConfig(
         dataset=raw["dataset"],
         loaders=list(raw["loaders"]),
