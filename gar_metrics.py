@@ -78,6 +78,57 @@ def _manager_rows(
     ]
 
 
+def _domain_cache_rows(
+    entries: list[dict],
+    run_type: str,
+    kind: str,
+    prefix: str,
+    fmt: Callable[[float, str], str],
+) -> list[str] | None:
+    if not entries:
+        return None
+    requests_key = f"{prefix}_requests"
+    leaders_key = f"{prefix}_leaders"
+    waiters_key = f"{prefix}_waiters"
+    completed_key = f"{prefix}_completed"
+    failed_key = f"{prefix}_failed"
+    hits_key = f"{prefix}_ram_cache_hits"
+    misses_key = f"{prefix}_ram_cache_misses"
+    evictions_key = f"{prefix}_ram_cache_evictions"
+    bytes_key = f"{prefix}_ram_cache_bytes"
+    requests = sum(int(entry.get(requests_key, 0)) for entry in entries)
+    leaders = sum(int(entry.get(leaders_key, 0)) for entry in entries)
+    waiters = sum(int(entry.get(waiters_key, 0)) for entry in entries)
+    completed = sum(int(entry.get(completed_key, 0)) for entry in entries)
+    failed = sum(int(entry.get(failed_key, 0)) for entry in entries)
+    hits = sum(int(entry.get(hits_key, 0)) for entry in entries)
+    misses = sum(int(entry.get(misses_key, 0)) for entry in entries)
+    evictions = sum(int(entry.get(evictions_key, 0)) for entry in entries)
+    ram_cache_bytes = max(int(entry.get(bytes_key, 0)) for entry in entries)
+    total = hits + misses
+    hit_rate = hits / total if total else float("nan")
+    dedup_ratio = requests / leaders if leaders else float("nan")
+    waiter_rate = waiters / requests if requests else float("nan")
+    failure_rate = failed / requests if requests else float("nan")
+    return [
+        run_type,
+        kind,
+        str(requests),
+        str(leaders),
+        str(waiters),
+        str(completed),
+        str(failed),
+        fmt(dedup_ratio, ".2f"),
+        fmt(waiter_rate, ".2%"),
+        fmt(failure_rate, ".2%"),
+        str(hits),
+        str(misses),
+        fmt(hit_rate, ".2%"),
+        str(evictions),
+        fmt(ram_cache_bytes / 1e6),
+    ]
+
+
 def data_chunk_manager(
     agg: dict,
     ordered_loaders: list[str],
@@ -86,33 +137,7 @@ def data_chunk_manager(
 ) -> tuple[list[str], list[list[str]]]:
     headers = [
         "run",
-        "Requests", "Leaders", "Waiters", "Completed", "Failed",
-        "Dedup ratio", "Waiter rate", "Failure rate",
-        "RAM hits", "RAM misses", "RAM hit rate", "RAM evict", "RAM MB",
-    ]
-    rows = []
-    for loader in ordered_loaders:
-        for run_type in run_types:
-            if run_type not in agg[loader]:
-                continue
-            row = _manager_rows(
-                agg[loader][run_type].get("chunk_manager", []),
-                run_type,
-                fmt,
-            )
-            if row is not None:
-                rows.append(row)
-    return headers, rows
-
-
-def data_feature_chunk_manager(
-    agg: dict,
-    ordered_loaders: list[str],
-    run_types: list[str],
-    fmt: Callable[[float, str], str],
-) -> tuple[list[str], list[list[str]]]:
-    headers = [
-        "run",
+        "kind",
         "Requests", "Leaders", "Waiters", "Completed", "Failed",
         "Dedup ratio", "Waiter rate", "Failure rate",
         "RAM hits", "RAM misses", "RAM hit rate", "RAM evict", "RAM MB",
@@ -124,13 +149,27 @@ def data_feature_chunk_manager(
         for run_type in run_types:
             if run_type not in agg[loader]:
                 continue
+            chunk_entries = agg[loader][run_type].get("chunk_manager", [])
+            for kind, prefix in (
+                ("adj_list", "edge_adj_list"),
+                ("offset", "edge_offset"),
+            ):
+                row = _domain_cache_rows(
+                    chunk_entries,
+                    run_type,
+                    kind,
+                    prefix,
+                    fmt,
+                )
+                if row is not None:
+                    rows.append(row)
             row = _manager_rows(
                 agg[loader][run_type].get("feature_chunk_manager", []),
                 run_type,
                 fmt,
             )
             if row is not None:
-                rows.append(row)
+                rows.append([row[0], "feature", *row[1:]])
     return headers, rows
 
 
