@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(pwd)"
 VENV_PYTHON="${ROOT_DIR}/.venv/bin/python"
 VENV_PIP="${ROOT_DIR}/.venv/bin/pip"
+ARROW_APT_VERSION="${ARROW_APT_VERSION:-24.0.0-1}"
 
 install_neo4j_if_missing() {
   if command -v neo4j >/dev/null 2>&1 && command -v neo4j-admin >/dev/null 2>&1; then
@@ -31,10 +32,15 @@ install_neo4j_if_missing() {
 }
 
 install_arrow_if_missing() {
-  wget https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
-  sudo apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
+  local arrow_source_deb="apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
+  wget "https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/${arrow_source_deb}"
+  sudo apt install -y -V "./${arrow_source_deb}"
   sudo apt update
-  sudo apt install -y -V libarrow-dev libarrow-dataset-dev libarrow-acero-dev libparquet-dev
+  sudo apt install -y -V \
+    "libarrow-dev=${ARROW_APT_VERSION}" \
+    "libarrow-dataset-dev=${ARROW_APT_VERSION}" \
+    "libarrow-acero-dev=${ARROW_APT_VERSION}" \
+    "libparquet-dev=${ARROW_APT_VERSION}"
 }
 
 sudo apt-get update
