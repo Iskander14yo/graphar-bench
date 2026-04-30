@@ -25,9 +25,10 @@ gar:
   edge_write_batch_size: 5000000
   edge_ram_for_loader_mb: 4096
   feature_ram_for_loader_mb: 0
-  num_workers: 0
-  prefetch_batches: 0      # 0 = auto (= num_workers)
-  feature_cursor_count: 1
+  num_samplers: 0
+  prefetch_batches: 0      # 0 = auto (= num_samplers, or 1 when num_samplers=0)
+  num_readers: 1
+  num_stitchers: 1
   feature_cursor_trail_chunks: 10
 
 neo4j:

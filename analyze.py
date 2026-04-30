@@ -254,6 +254,15 @@ def _data_feature_cursor(agg: dict) -> tuple[list[str], list[list[str]]]:
     )
 
 
+def _data_feature_pipeline(agg: dict) -> tuple[list[str], list[list[str]]]:
+    return gar_metrics.data_feature_pipeline(
+        agg,
+        _ordered_loaders(agg),
+        RUN_TYPES,
+        _fmt,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Save table images
 # ---------------------------------------------------------------------------
@@ -264,6 +273,7 @@ _TABLES = [
     ("Table 3: Resource usage",                  _data_table3),
     ("Chunk manager summary",                    _data_chunk_manager),
     ("Feature chunk manager summary",            _data_feature_chunk_manager),
+    ("Feature pipeline summary",                 _data_feature_pipeline),
     ("Feature cursor summary",                   _data_feature_cursor),
     ("Neo4j PROFILE summary",                    _data_neo4j_profile),
 ]
