@@ -18,7 +18,8 @@ class GarSection:
     edge_chunk_size: int
     vertex_write_batch_size: int
     edge_write_batch_size: int
-    edge_ram_for_loader_mb: int = 0
+    adj_list_ram_for_loader_mb: int = 0
+    offset_ram_for_loader_mb: int = 0
     feature_ram_for_loader_mb: int = 0
     num_samplers: int = 4
     prefetch_batches: int = 0
@@ -68,9 +69,12 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
     if batch_limit is not None and batch_limit < 0:
         raise ValueError("batch_limit must be non-negative or null")
     gar_raw = dict(raw["gar"])
+    legacy_edge_budget_mb = gar_raw.pop("edge_ram_for_loader_mb", None)
     shared_budget_mb = gar_raw.pop("ram_for_loader_mb", None)
+    if legacy_edge_budget_mb is not None:
+        gar_raw.setdefault("adj_list_ram_for_loader_mb", legacy_edge_budget_mb)
     if shared_budget_mb is not None:
-        gar_raw.setdefault("edge_ram_for_loader_mb", shared_budget_mb)
+        gar_raw.setdefault("adj_list_ram_for_loader_mb", shared_budget_mb)
         gar_raw.setdefault("feature_ram_for_loader_mb", shared_budget_mb)
     legacy_feature_cursor_count = gar_raw.pop("feature_cursor_count", None)
     if legacy_feature_cursor_count is not None:
