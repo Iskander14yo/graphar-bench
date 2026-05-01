@@ -235,15 +235,6 @@ def _data_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
     return gar_metrics.data_chunk_manager(agg, _ordered_loaders(agg), RUN_TYPES, _fmt)
 
 
-def _data_feature_chunk_manager(agg: dict) -> tuple[list[str], list[list[str]]]:
-    return gar_metrics.data_feature_chunk_manager(
-        agg,
-        _ordered_loaders(agg),
-        RUN_TYPES,
-        _fmt,
-    )
-
-
 def _data_feature_cursor(agg: dict) -> tuple[list[str], list[list[str]]]:
     return gar_metrics.data_feature_cursor(
         agg,
@@ -271,8 +262,7 @@ _TABLES = [
     ("Table 1: Main comparison",                 _data_table1),
     ("Table 2: Stage breakdown (GAR and Neo4j)", _data_table2),
     ("Table 3: Resource usage",                  _data_table3),
-    ("Chunk manager summary",                    _data_chunk_manager),
-    ("Feature chunk manager summary",            _data_feature_chunk_manager),
+    ("Chunk cache summary",                      _data_chunk_manager),
     ("Feature pipeline summary",                 _data_feature_pipeline),
     ("Feature cursor summary",                   _data_feature_cursor),
     ("Neo4j PROFILE summary",                    _data_neo4j_profile),
