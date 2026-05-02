@@ -357,59 +357,7 @@ def plot_results(agg: dict, out_dir: Path) -> None:
     has_warm = any("warm" in agg[l] for l in loaders)
     run_label = "warm" if has_warm else "cold"
 
-    # -- 1. Bar chart: mean batch time with std error bars -------------------
-    means, stds, labels = [], [], []
-    for loader in loaders:
-        rt = _best_run_type(agg, loader)
-        batches = _non_profiled(agg[loader][rt]["batches"], loader)
-        totals = [b["total_ms"] for b in batches]
-        means.append(_mean(totals))
-        stds.append(float(np.std(totals)) if totals else 0.0)
-        labels.append(loader)
-
-    if means:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        x = list(range(len(labels)))
-        ax.bar(x, means, yerr=stds, capsize=5, color="steelblue", alpha=0.8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=15, ha="right")
-        ax.set_ylabel("Mean batch time (ms)")
-        ax.set_title(f"Mean batch time — {run_label} runs")
-        ax.grid(axis="y", alpha=0.4)
-        plt.tight_layout()
-        p = out_dir / "01_mean_batch_time.png"
-        fig.savefig(p, dpi=150)
-        plt.close(fig)
-        print(f"  Saved: {p}")
-
-    # -- 2. Stacked bar: retrieval vs conversion (GAR + Neo4j) ---------------
-    stage_loaders = [l for l in loaders if l == "gar" or l.startswith("neo4j")]
-    if stage_loaders:
-        retr_means, conv_means, s_labels = [], [], []
-        for loader in stage_loaders:
-            rt = _best_run_type(agg, loader)
-            batches = _non_profiled(agg[loader][rt]["batches"], loader)
-            retr_means.append(_mean([b["retrieval_ms"] for b in batches]))
-            conv_means.append(_mean([b["conversion_ms"] for b in batches]))
-            s_labels.append(loader)
-
-        fig, ax = plt.subplots(figsize=(8, 5))
-        x = list(range(len(s_labels)))
-        ax.bar(x, retr_means, label="Retrieval", color="steelblue", alpha=0.8)
-        ax.bar(x, conv_means, bottom=retr_means, label="Conversion", color="coral", alpha=0.8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(s_labels, rotation=15, ha="right")
-        ax.set_ylabel("Mean time (ms)")
-        ax.set_title(f"Stage breakdown — {run_label} runs")
-        ax.legend()
-        ax.grid(axis="y", alpha=0.4)
-        plt.tight_layout()
-        p = out_dir / "02_stage_breakdown.png"
-        fig.savefig(p, dpi=150)
-        plt.close(fig)
-        print(f"  Saved: {p}")
-
-    # -- 3. Box plot: batch time distribution (no outliers) ------------------
+    # -- Box plot: batch time distribution (no outliers) ----------------------
     box_data, box_labels = [], []
     for loader in loaders:
         rt = _best_run_type(agg, loader)
