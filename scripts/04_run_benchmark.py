@@ -29,7 +29,7 @@ import graphar as gar
 from benchmarks.gar_loader import iter_batches as _gar_iter
 from benchmarks.neo4j_loader import Neo4jNeighborLoader, iter_batches as _neo4j_iter
 from benchmarks.pyg_loader import PyGNeighborLoader, iter_batches as _pyg_iter
-from benchmarks.timings import BatchTimings, SystemSample
+from benchmarks.timings import BatchTimings, FeaturePipelineSample, SystemSample
 from graphar.ml.torch import GARNeighborLoader
 
 _BENCH_ROOT = Path(__file__).resolve().parent.parent
@@ -128,6 +128,61 @@ class _SystemMonitor:
             prev_t = now
 
 
+class _FeaturePipelineMonitor:
+    """Samples feature pipeline queue state at fixed intervals."""
+
+    def __init__(self, interval_s: float = 0.5) -> None:
+        self._interval_s = interval_s
+        self._loader = None
+        self._samples: list[FeaturePipelineSample] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._t0 = 0.0
+
+    def start(self, loader) -> None:
+        self._loader = loader if _feature_pipeline_stats(loader) is not None else None
+        self._samples = []
+        self._stop.clear()
+        self._thread = None
+        self._t0 = time.perf_counter()
+        if self._loader is None:
+            return
+        self._sample_now()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> list[FeaturePipelineSample]:
+        if self._loader is None:
+            return []
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(3.0, self._interval_s * 2))
+        self._sample_now()
+        return list(self._samples)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_s):
+            self._sample_now()
+
+    def _sample_now(self) -> None:
+        if self._loader is None:
+            return
+        stats = _feature_pipeline_stats(self._loader)
+        if stats is None:
+            return
+        self._samples.append(
+            FeaturePipelineSample(
+                timestamp_ms=int((time.perf_counter() - self._t0) * 1000),
+                active_batches_current=int(stats.get("active_batches_current", 0)),
+                active_chunk_keys_current=int(
+                    stats.get("active_chunk_keys_current", 0)
+                ),
+                read_queue_current=int(stats.get("read_queue_current", 0)),
+                stitch_queue_current=int(stats.get("stitch_queue_current", 0)),
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -181,7 +236,9 @@ def _feature_pipeline_stats(loader) -> dict[str, int] | None:
     return loader.feature_pipeline_stats()
 
 
-def _stats_delta(after: dict[str, int] | None, before: dict[str, int] | None) -> dict[str, int] | None:
+def _stats_delta(
+    after: dict[str, int] | None, before: dict[str, int] | None
+) -> dict[str, int] | None:
     if after is None or before is None:
         return None
     return {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in after}
@@ -201,6 +258,7 @@ def _feature_cursor_stats_delta(
             "requests_failed",
             "chunks_read",
             "chunks_served",
+            "chunk_order_wraps",
             "rows_served",
             "batches_served",
             "trail_hits",
@@ -237,8 +295,14 @@ def _feature_pipeline_stats_delta(
             "stitch_service_ms_sum",
         )
     }
+    delta["active_batches_current"] = int(after.get("active_batches_current", 0))
     delta["pending_batches_peak"] = int(after.get("pending_batches_peak", 0))
+    delta["active_chunk_keys_current"] = int(
+        after.get("active_chunk_keys_current", 0)
+    )
     delta["active_chunk_keys_peak"] = int(after.get("active_chunk_keys_peak", 0))
+    delta["read_queue_current"] = int(after.get("read_queue_current", 0))
+    delta["stitch_queue_current"] = int(after.get("stitch_queue_current", 0))
     return delta
 
 
@@ -308,15 +372,21 @@ def _make_pyg_loader(config: BenchmarkConfig) -> PyGNeighborLoader:
 # ---------------------------------------------------------------------------
 
 def _run_epoch(
-    loader, iter_fn, monitor: _SystemMonitor, desc: str, batch_limit: int | None
-) -> tuple[list[BatchTimings], list[SystemSample], float]:
-    """Returns (batch_timings, system_samples, epoch_time_ms)."""
+    loader,
+    iter_fn,
+    monitor: _SystemMonitor,
+    feature_pipeline_monitor: _FeaturePipelineMonitor,
+    desc: str,
+    batch_limit: int | None,
+) -> tuple[list[BatchTimings], list[FeaturePipelineSample], list[SystemSample], float]:
+    """Returns (batch_timings, feature_pipeline_samples, system_samples, epoch_time_ms)."""
     total = len(loader) # if hasattr(loader, "__len__") else None
     batches = iter_fn(loader)
     if batch_limit is not None:
         total = min(total, batch_limit)
         batches = itertools.islice(batches, batch_limit)
     monitor.start()
+    feature_pipeline_monitor.start(loader)
     batch_timings: list[BatchTimings] = []
     t0 = time.perf_counter()
     with tqdm(batches, total=total, desc=desc, unit="batch", leave=False) as pbar:
@@ -324,8 +394,9 @@ def _run_epoch(
             batch_timings.append(bt)
             pbar.set_postfix({"ms": f"{bt.total_ms:.0f}"})
     epoch_time_ms = (time.perf_counter() - t0) * 1000
+    feature_pipeline_samples = feature_pipeline_monitor.stop()
     system_samples = monitor.stop()
-    return batch_timings, system_samples, epoch_time_ms
+    return batch_timings, feature_pipeline_samples, system_samples, epoch_time_ms
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +411,7 @@ def _run_loader(
     result_dir: Path,
 ) -> None:
     monitor = _SystemMonitor()
+    feature_pipeline_monitor = _FeaturePipelineMonitor()
     runs = []
     loader = None
 
@@ -361,10 +433,11 @@ def _run_loader(
             feature_chunk_stats_before = _feature_chunk_manager_stats(loader)
             feature_pipeline_stats_before = _feature_pipeline_stats(loader)
             feature_cursor_stats_before = _feature_cursor_stats(loader)
-            batch_timings, system_samples, epoch_time_ms = _run_epoch(
+            batch_timings, feature_pipeline_samples, system_samples, epoch_time_ms = _run_epoch(
                 loader,
                 iter_fn,
                 monitor,
+                feature_pipeline_monitor,
                 desc=f"{loader_name}/{run_type}",
                 batch_limit=config.batch_limit,
             )
@@ -394,6 +467,10 @@ def _run_loader(
                 "batches": [dataclasses.asdict(bt) for bt in batch_timings],
                 "system_metrics": [dataclasses.asdict(ss) for ss in system_samples],
             })
+            if feature_pipeline_samples:
+                runs[-1]["feature_pipeline_timeline"] = [
+                    dataclasses.asdict(sample) for sample in feature_pipeline_samples
+                ]
             if chunk_stats is not None:
                 runs[-1]["chunk_manager"] = chunk_stats
             if feature_chunk_stats is not None:

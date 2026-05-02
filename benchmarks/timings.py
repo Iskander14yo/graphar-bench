@@ -42,3 +42,12 @@ class SystemSample:
     cpu_pct: float          # process CPU %, summed over all threads/logical CPUs; can exceed 100% × physical_cores
     rss_mb: float           # process RSS
     disk_read_mb_s: float   # system-wide disk read throughput
+
+
+@dataclass
+class FeaturePipelineSample:
+    timestamp_ms: int
+    active_batches_current: int
+    active_chunk_keys_current: int
+    read_queue_current: int
+    stitch_queue_current: int

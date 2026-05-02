@@ -89,11 +89,17 @@ def load_results(path: Path) -> dict[str, dict[str, dict]]:
                         "batches": [],
                         "system_metrics": [],
                         "epoch_times_ms": [],
+                        "feature_pipeline_timelines": [],
                     }
                 )
                 gar_metrics.init_bucket(bucket)
                 bucket["batches"].extend(run.get("batches", []))
                 bucket["system_metrics"].extend(run.get("system_metrics", []))
+                if "feature_pipeline_timeline" in run:
+                    bucket["feature_pipeline_timelines"].append({
+                        "run_id": run.get("run_id"),
+                        "samples": run["feature_pipeline_timeline"],
+                    })
                 gar_metrics.append_run(bucket, run)
                 if "epoch_time_ms" in run:
                     bucket["epoch_times_ms"].append(run["epoch_time_ms"])
@@ -349,6 +355,53 @@ def _best_run_type(agg: dict, loader: str) -> str:
     return "warm" if "warm" in agg[loader] else "cold"
 
 
+def _plot_feature_pipeline_timelines(agg: dict, out_dir: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    metrics = [
+        ("active_batches_current", "Active batches"),
+        ("active_chunk_keys_current", "Active chunk keys"),
+        ("read_queue_current", "Read queue"),
+        ("stitch_queue_current", "Stitch queue"),
+    ]
+
+    for loader in _ordered_loaders(agg):
+        for rt in RUN_TYPES:
+            if rt not in agg[loader]:
+                continue
+            timelines = agg[loader][rt].get("feature_pipeline_timelines", [])
+            if not timelines:
+                continue
+
+            fig, axes = plt.subplots(len(metrics), 1, figsize=(10, 8), sharex=True)
+            fig.suptitle(f"Feature pipeline queues — {loader} / {rt}")
+
+            for ax, (metric_key, metric_label) in zip(axes, metrics):
+                has_data = False
+                for idx, timeline in enumerate(timelines):
+                    samples = timeline.get("samples", [])
+                    if not samples:
+                        continue
+                    xs = [sample.get("timestamp_ms", 0) / 1000.0 for sample in samples]
+                    ys = [sample.get(metric_key, 0) for sample in samples]
+                    run_id = timeline.get("run_id")
+                    label = f"run {run_id}" if run_id is not None else f"series {idx}"
+                    ax.step(xs, ys, where="post", label=label)
+                    has_data = True
+                ax.set_ylabel(metric_label)
+                ax.grid(axis="y", alpha=0.4)
+                if has_data and len(timelines) > 1:
+                    ax.legend(loc="upper right", fontsize=8)
+
+            axes[-1].set_xlabel("Time (s)")
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93)
+            path = out_dir / f"04_feature_pipeline_queues_{loader}_{rt}.png"
+            fig.savefig(path, dpi=150)
+            plt.close(fig)
+            print(f"  Saved: {path}")
+
+
 def plot_results(agg: dict, out_dir: Path) -> None:
     import matplotlib.pyplot as plt
 
@@ -377,6 +430,8 @@ def plot_results(agg: dict, out_dir: Path) -> None:
         fig.savefig(p, dpi=150)
         plt.close(fig)
         print(f"  Saved: {p}")
+
+    _plot_feature_pipeline_timelines(agg, out_dir)
 
 
 # ---------------------------------------------------------------------------
