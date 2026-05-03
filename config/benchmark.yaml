@@ -30,6 +30,8 @@ gar:
   prefetch_batches: 0      # 0 = auto (= num_samplers, or 1 when num_samplers=0)
   edge_cursor_count: 0
   edge_cursor_trail_chunks: 0
+  num_edge_readers: 0
+  num_edge_processors: 1
   num_readers: 1
   num_stitchers: 1
   feature_cursor_trail_chunks: 10

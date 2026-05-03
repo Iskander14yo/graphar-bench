@@ -248,6 +248,12 @@ def _feature_pipeline_stats(loader) -> dict[str, int] | None:
     return loader.feature_pipeline_stats()
 
 
+def _edge_pipeline_stats(loader) -> dict[str, int] | None:
+    if not hasattr(loader, "edge_pipeline_stats"):
+        return None
+    return loader.edge_pipeline_stats()
+
+
 def _stats_delta(
     after: dict[str, int] | None, before: dict[str, int] | None
 ) -> dict[str, int] | None:
@@ -318,6 +324,49 @@ def _feature_pipeline_stats_delta(
     return delta
 
 
+def _edge_pipeline_stats_delta(
+    after: dict[str, int] | None,
+    before: dict[str, int] | None,
+) -> dict[str, int] | None:
+    if after is None or before is None:
+        return None
+    delta = {
+        key: int(after.get(key, 0)) - int(before.get(key, 0))
+        for key in (
+            "submitted_batches",
+            "completed_batches",
+            "offset_chunk_subscriptions",
+            "offset_chunk_reads",
+            "offset_chunk_reuses",
+            "adj_chunk_subscriptions",
+            "adj_chunk_reads",
+            "adj_chunk_reuses",
+            "processor_tasks",
+            "processor_wait_ms_sum",
+            "processor_service_ms_sum",
+        )
+    }
+    delta["active_batches_current"] = int(after.get("active_batches_current", 0))
+    delta["pending_batches_peak"] = int(after.get("pending_batches_peak", 0))
+    delta["active_offset_chunk_keys_current"] = int(
+        after.get("active_offset_chunk_keys_current", 0)
+    )
+    delta["active_offset_chunk_keys_peak"] = int(
+        after.get("active_offset_chunk_keys_peak", 0)
+    )
+    delta["active_adj_chunk_keys_current"] = int(
+        after.get("active_adj_chunk_keys_current", 0)
+    )
+    delta["active_adj_chunk_keys_peak"] = int(
+        after.get("active_adj_chunk_keys_peak", 0)
+    )
+    delta["read_queue_current"] = int(after.get("read_queue_current", 0))
+    delta["processor_queue_current"] = int(
+        after.get("processor_queue_current", 0)
+    )
+    return delta
+
+
 # ---------------------------------------------------------------------------
 # Loader factories
 # ---------------------------------------------------------------------------
@@ -346,6 +395,8 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         prefetch_batches=g.prefetch_batches,
         edge_cursor_count=g.edge_cursor_count,
         edge_cursor_trail_chunks=g.edge_cursor_trail_chunks,
+        num_edge_readers=g.num_edge_readers,
+        num_edge_processors=g.num_edge_processors,
         num_readers=g.num_readers,
         num_stitchers=g.num_stitchers,
         feature_cursor_trail_chunks=g.feature_cursor_trail_chunks,
@@ -448,6 +499,7 @@ def _run_loader(
             edge_adj_list_cursor_stats_before = _edge_adj_list_cursor_stats(loader)
             feature_chunk_stats_before = _feature_chunk_manager_stats(loader)
             feature_pipeline_stats_before = _feature_pipeline_stats(loader)
+            edge_pipeline_stats_before = _edge_pipeline_stats(loader)
             feature_cursor_stats_before = _feature_cursor_stats(loader)
             batch_timings, feature_pipeline_samples, system_samples, epoch_time_ms = _run_epoch(
                 loader,
@@ -473,6 +525,10 @@ def _run_loader(
             feature_pipeline_stats = _feature_pipeline_stats_delta(
                 _feature_pipeline_stats(loader),
                 feature_pipeline_stats_before,
+            )
+            edge_pipeline_stats = _edge_pipeline_stats_delta(
+                _edge_pipeline_stats(loader),
+                edge_pipeline_stats_before,
             )
             feature_cursor_stats = _feature_cursor_stats_delta(
                 _feature_cursor_stats(loader),
@@ -505,6 +561,8 @@ def _run_loader(
                 runs[-1]["feature_chunk_manager"] = feature_chunk_stats
             if feature_pipeline_stats is not None:
                 runs[-1]["feature_pipeline"] = feature_pipeline_stats
+            if edge_pipeline_stats is not None:
+                runs[-1]["edge_pipeline"] = edge_pipeline_stats
             if feature_cursor_stats is not None:
                 runs[-1]["feature_cursor"] = feature_cursor_stats
     finally:
