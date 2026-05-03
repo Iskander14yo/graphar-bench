@@ -224,16 +224,10 @@ def _feature_cursor_stats(loader) -> dict[str, int] | None:
     return loader.feature_cursor_stats()
 
 
-def _edge_offset_cursor_stats(loader) -> dict[str, int] | None:
-    if not hasattr(loader, "edge_offset_cursor_stats"):
+def _edge_cursor_stats(loader) -> dict[str, int] | None:
+    if not hasattr(loader, "edge_cursor_stats"):
         return None
-    return loader.edge_offset_cursor_stats()
-
-
-def _edge_adj_list_cursor_stats(loader) -> dict[str, int] | None:
-    if not hasattr(loader, "edge_adj_list_cursor_stats"):
-        return None
-    return loader.edge_adj_list_cursor_stats()
+    return loader.edge_cursor_stats()
 
 
 def _feature_chunk_manager_stats(loader) -> dict[str, int] | None:
@@ -393,7 +387,6 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         feature_ram_for_loader_mb=g.feature_ram_for_loader_mb,
         num_samplers=g.num_samplers,
         prefetch_batches=g.prefetch_batches,
-        edge_cursor_count=g.edge_cursor_count,
         edge_cursor_trail_chunks=g.edge_cursor_trail_chunks,
         num_edge_readers=g.num_edge_readers,
         num_edge_processors=g.num_edge_processors,
@@ -495,8 +488,7 @@ def _run_loader(
                 loader = make_loader()
 
             chunk_stats_before = _chunk_manager_stats(loader)
-            edge_offset_cursor_stats_before = _edge_offset_cursor_stats(loader)
-            edge_adj_list_cursor_stats_before = _edge_adj_list_cursor_stats(loader)
+            edge_cursor_stats_before = _edge_cursor_stats(loader)
             feature_chunk_stats_before = _feature_chunk_manager_stats(loader)
             feature_pipeline_stats_before = _feature_pipeline_stats(loader)
             edge_pipeline_stats_before = _edge_pipeline_stats(loader)
@@ -510,13 +502,9 @@ def _run_loader(
                 batch_limit=config.batch_limit,
             )
             chunk_stats = _stats_delta(_chunk_manager_stats(loader), chunk_stats_before)
-            edge_offset_cursor_stats = _feature_cursor_stats_delta(
-                _edge_offset_cursor_stats(loader),
-                edge_offset_cursor_stats_before,
-            )
-            edge_adj_list_cursor_stats = _feature_cursor_stats_delta(
-                _edge_adj_list_cursor_stats(loader),
-                edge_adj_list_cursor_stats_before,
+            edge_cursor_stats = _feature_cursor_stats_delta(
+                _edge_cursor_stats(loader),
+                edge_cursor_stats_before,
             )
             feature_chunk_stats = _stats_delta(
                 _feature_chunk_manager_stats(loader),
@@ -553,10 +541,8 @@ def _run_loader(
                 ]
             if chunk_stats is not None:
                 runs[-1]["chunk_manager"] = chunk_stats
-            if edge_offset_cursor_stats is not None:
-                runs[-1]["edge_offset_cursor"] = edge_offset_cursor_stats
-            if edge_adj_list_cursor_stats is not None:
-                runs[-1]["edge_adj_list_cursor"] = edge_adj_list_cursor_stats
+            if edge_cursor_stats is not None:
+                runs[-1]["edge_cursor"] = edge_cursor_stats
             if feature_chunk_stats is not None:
                 runs[-1]["feature_chunk_manager"] = feature_chunk_stats
             if feature_pipeline_stats is not None:

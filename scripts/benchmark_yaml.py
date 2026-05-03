@@ -23,9 +23,8 @@ class GarSection:
     feature_ram_for_loader_mb: int = 0
     num_samplers: int = 4
     prefetch_batches: int = 0
-    edge_cursor_count: int = 0
     edge_cursor_trail_chunks: int = 0
-    num_edge_readers: int = 0
+    num_edge_readers: int = 1
     num_edge_processors: int = 1
     num_readers: int = 1
     num_stitchers: int = 1
@@ -83,8 +82,6 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
     legacy_feature_cursor_count = gar_raw.pop("feature_cursor_count", None)
     if legacy_feature_cursor_count is not None:
         gar_raw.setdefault("num_readers", legacy_feature_cursor_count)
-    if "num_edge_readers" not in gar_raw:
-        gar_raw.setdefault("num_edge_readers", gar_raw.get("edge_cursor_count", 0))
     return BenchmarkConfig(
         dataset=raw["dataset"],
         loaders=list(raw["loaders"]),
