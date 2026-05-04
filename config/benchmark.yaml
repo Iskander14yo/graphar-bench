@@ -28,6 +28,7 @@ gar:
   feature_ram_for_loader_mb: 0
   num_samplers: 0
   prefetch_batches: 0      # 0 = auto (= num_samplers, or 1 when num_samplers=0)
+  read_warmup_pct: 0.0
   num_readers: 1
   num_stitchers: 1
   feature_cursor_trail_chunks: 10

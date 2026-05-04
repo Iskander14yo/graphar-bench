@@ -23,6 +23,7 @@ class GarSection:
     feature_ram_for_loader_mb: int = 0
     num_samplers: int = 4
     prefetch_batches: int = 0
+    read_warmup_pct: float = 0.0
     num_readers: int = 1
     num_stitchers: int = 1
     feature_cursor_trail_chunks: int = 10
@@ -69,6 +70,9 @@ def load_config(path: Path | str | None = None) -> BenchmarkConfig:
     if batch_limit is not None and batch_limit < 0:
         raise ValueError("batch_limit must be non-negative or null")
     gar_raw = dict(raw["gar"])
+    read_warmup_pct = gar_raw.get("read_warmup_pct", 0.0)
+    if not 0.0 <= read_warmup_pct <= 1.0:
+        raise ValueError("gar.read_warmup_pct must be between 0 and 1")
     legacy_edge_budget_mb = gar_raw.pop("edge_ram_for_loader_mb", None)
     shared_budget_mb = gar_raw.pop("ram_for_loader_mb", None)
     if legacy_edge_budget_mb is not None:

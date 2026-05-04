@@ -332,6 +332,7 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         feature_ram_for_loader_mb=g.feature_ram_for_loader_mb,
         num_samplers=g.num_samplers,
         prefetch_batches=g.prefetch_batches,
+        read_warmup_pct=g.read_warmup_pct,
         num_readers=g.num_readers,
         num_stitchers=g.num_stitchers,
         feature_cursor_trail_chunks=g.feature_cursor_trail_chunks,
