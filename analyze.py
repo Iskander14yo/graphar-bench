@@ -355,12 +355,65 @@ def _best_run_type(agg: dict, loader: str) -> str:
     return "warm" if "warm" in agg[loader] else "cold"
 
 
+def _stitched_time_seconds(metrics: list[dict], gap_s: float = 1.0) -> list[float]:
+    """Monotonic wall-clock-like time from sample timestamps (handles merged runs)."""
+    out: list[float] = []
+    offset = 0.0
+    prev_raw: float | None = None
+    for m in metrics:
+        raw = m["timestamp_ms"] / 1000.0
+        if prev_raw is not None and raw < prev_raw - 0.5:
+            offset = out[-1] + gap_s - raw
+        out.append(offset + raw)
+        prev_raw = raw
+    return out
+
+
+def _plot_system_resources_timeseries(agg: dict, out_dir: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    for loader in _ordered_loaders(agg):
+        for rt in RUN_TYPES:
+            if rt not in agg[loader]:
+                continue
+            metrics = agg[loader][rt]["system_metrics"]
+            if not metrics:
+                continue
+            ts = _stitched_time_seconds(metrics)
+            cpu = [m["cpu_pct"] for m in metrics]
+            rss = [m["rss_mb"] for m in metrics]
+            disk = [m["disk_read_mb_s"] for m in metrics]
+
+            fig, axes = plt.subplots(3, 1, figsize=(10, 7), sharex=True)
+            fig.suptitle(f"System resources — {loader} / {rt}")
+
+            axes[0].plot(ts, cpu, color="#2C5F8A", linewidth=1.0)
+            axes[0].set_ylabel("CPU (%)")
+            axes[0].grid(alpha=0.4)
+
+            axes[1].plot(ts, rss, color="#2E7D32", linewidth=1.0)
+            axes[1].set_ylabel("RAM (MB)")
+            axes[1].grid(alpha=0.4)
+
+            axes[2].plot(ts, disk, color="#C62828", linewidth=1.0)
+            axes[2].set_ylabel("Disk read (MB/s)")
+            axes[2].set_xlabel("Time (s)")
+            axes[2].grid(alpha=0.4)
+
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93)
+            path = out_dir / f"05_system_resources_{loader}_{rt}.png"
+            fig.savefig(path, dpi=150)
+            plt.close(fig)
+            print(f"  Saved: {path}")
+
+
 def _plot_feature_pipeline_timelines(agg: dict, out_dir: Path) -> None:
     import matplotlib.pyplot as plt
 
     metrics = [
         ("active_batches_current", "Active batches"),
-        ("active_chunk_keys_current", "Active chunk keys"),
+        ("active_samplers_current", "Samplers (non-idle)"),
         ("read_queue_current", "Read queue"),
         ("stitch_queue_current", "Stitch queue"),
     ]
@@ -431,6 +484,7 @@ def plot_results(agg: dict, out_dir: Path) -> None:
         plt.close(fig)
         print(f"  Saved: {p}")
 
+    _plot_system_resources_timeseries(agg, out_dir)
     _plot_feature_pipeline_timelines(agg, out_dir)
 
 

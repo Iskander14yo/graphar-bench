@@ -174,9 +174,7 @@ class _FeaturePipelineMonitor:
             FeaturePipelineSample(
                 timestamp_ms=int((time.perf_counter() - self._t0) * 1000),
                 active_batches_current=int(stats.get("active_batches_current", 0)),
-                active_chunk_keys_current=int(
-                    stats.get("active_chunk_keys_current", 0)
-                ),
+                active_samplers_current=int(stats.get("active_samplers_current", 0)),
                 read_queue_current=int(stats.get("read_queue_current", 0)),
                 stitch_queue_current=int(stats.get("stitch_queue_current", 0)),
             )
@@ -332,6 +330,7 @@ def _make_gar_loader(config: BenchmarkConfig) -> GARNeighborLoader:
         feature_ram_for_loader_mb=g.feature_ram_for_loader_mb,
         num_samplers=g.num_samplers,
         prefetch_batches=g.prefetch_batches,
+        read_warmup_pct=g.read_warmup_pct,
         num_readers=g.num_readers,
         num_stitchers=g.num_stitchers,
         feature_cursor_trail_chunks=g.feature_cursor_trail_chunks,
