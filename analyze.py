@@ -413,7 +413,7 @@ def _plot_feature_pipeline_timelines(agg: dict, out_dir: Path) -> None:
 
     metrics = [
         ("active_batches_current", "Active batches"),
-        ("active_chunk_keys_current", "Active chunk keys"),
+        ("active_samplers_current", "Samplers (non-idle)"),
         ("read_queue_current", "Read queue"),
         ("stitch_queue_current", "Stitch queue"),
     ]

@@ -174,9 +174,7 @@ class _FeaturePipelineMonitor:
             FeaturePipelineSample(
                 timestamp_ms=int((time.perf_counter() - self._t0) * 1000),
                 active_batches_current=int(stats.get("active_batches_current", 0)),
-                active_chunk_keys_current=int(
-                    stats.get("active_chunk_keys_current", 0)
-                ),
+                active_samplers_current=int(stats.get("active_samplers_current", 0)),
                 read_queue_current=int(stats.get("read_queue_current", 0)),
                 stitch_queue_current=int(stats.get("stitch_queue_current", 0)),
             )

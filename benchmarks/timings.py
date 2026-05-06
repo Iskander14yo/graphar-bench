@@ -48,6 +48,6 @@ class SystemSample:
 class FeaturePipelineSample:
     timestamp_ms: int
     active_batches_current: int
-    active_chunk_keys_current: int
+    active_samplers_current: int
     read_queue_current: int
     stitch_queue_current: int
